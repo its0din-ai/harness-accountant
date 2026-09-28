@@ -37,8 +37,6 @@ current peak-hour state, shown inside the DSH Web GUI and nowhere else.
   - [Security](#security)
   - [Development](#development)
     - [Developing against a working copy](#developing-against-a-working-copy)
-  - [Attribution](#attribution)
-  - [Licence](#licence)
 
 ---
 
@@ -438,17 +436,3 @@ done
 
 dsh plugin --profile web add link:"$PWD"
 ```
-
-## Attribution
-
-The sidebar card uses the same approach as `@linxin666/dsh-usage` (Apache-2.0):
-the sidebar foot's only slot stacks *above* the Settings row and cannot host a
-block, so the card is a plain `div` with its own React root seated by DOM surgery,
-re-seated by a `MutationObserver`, and switched between its full and rail forms by
-a second one watching the shell's collapsed marker. No code was copied; the balance
-and ledger logic here is independent.
-
-## Licence
-
-MIT. `THREAT.md` ships inside the package on purpose: it is the security posture
-you are installing, not an internal note.
