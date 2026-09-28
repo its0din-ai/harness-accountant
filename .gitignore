@@ -26,7 +26,7 @@ ledger.json.tmp
 #
 # SPEC/PHASE/STATE/DECISIONS/EVIDENCE are for the agent and the author. They
 # carry machine paths, open questions, and blunt self-assessment that do not
-# belong in a published repository. THREAT.md is deliberately NOT here — it is a
+# belong in a published repository. THREAT.md is deliberately NOT here - it is a
 # deliverable, so a reader installing this plugin can see what it does and does
 # not defend against.
 agent-res/

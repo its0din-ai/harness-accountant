@@ -4,9 +4,9 @@ DeepSeek balance and spend accounting for the DSH Web GUI.
 
 Two surfaces, nothing else:
 
-1. **A balance card in the sidebar**, seated directly above the Settings row —
+1. **A balance card in the sidebar**, seated directly above the Settings row -
    current balance with an eye toggle that masks it, plus today's spend.
-2. **A detailed panel in the Settings modal** — the same balance, with 1 day /
+2. **A detailed panel in the Settings modal** - the same balance, with 1 day /
    7 days / 1 month breakdowns, totals, and a per-day spend bar list.
 
 ## What it does not do
@@ -26,7 +26,7 @@ lib/client.js   browser: sidebar card + settings panel, no bundler, no JSX
 
 The host asks DeepSeek for the balance, folds each reading into a small daily
 ledger under `$DSH_HOME/harness-accountant/ledger.json`, and serves the result
-as JSON. The browser half only ever receives formatted numbers — it never sees
+as JSON. The browser half only ever receives formatted numbers - it never sees
 the API key, the credential reference, or the ledger path.
 
 Spend is the **movement of the account balance between readings**. That means
@@ -45,7 +45,7 @@ Hosted at
 [github.com/its0din-ai/harness-accountant](https://github.com/its0din-ai/harness-accountant).
 
 ```sh
-# 1. back up the profile wiring first — this is the rollback
+# 1. back up the profile wiring first - this is the rollback
 cp ~/.dsh/profiles/web/package.json      ~/.dsh/profiles/web/package.json.bak
 cp ~/.dsh/profiles/web/cordis.patch.yml  ~/.dsh/profiles/web/cordis.patch.yml.bak
 
@@ -67,7 +67,7 @@ dsh plugin --profile web add \
 
 A `link:` install resolves from the **realpath** of the working copy, so
 `@deepseek-ai/schemastery`, `@deepseek-ai/dsh-credentials`, and
-`@deepseek-ai/cordis` must be findable there — not from the profile's
+`@deepseek-ai/cordis` must be findable there - not from the profile's
 `node_modules`. This affects **local development only**; an install from
 GitHub resolves them through the profile tree and needs nothing.
 
@@ -121,7 +121,7 @@ stubbed `fetch`, and a throwaway `DSH_HOME`.
 ## Security
 
 Read [THREAT.md](THREAT.md). It maps every threat this design considered, says
-whether it is mitigated, and — where it is not — states the tradeoff.
+whether it is mitigated, and - where it is not - states the tradeoff.
 
 The short version: the key never leaves the host process, only travels to a
 verified `https:` origin with redirects refused, is redacted out of every error

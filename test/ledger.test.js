@@ -182,7 +182,7 @@ test('a whole accounting day is always 86_400_000 ms long', () => {
   for (let day = 1; day <= 730; day += 1) {
     const key = accounting_date_key(start + day * 86_400_000, SHANGHAI)
     assert.equal(key, accounting_day_offset_key(start + day * 86_400_000, 0, SHANGHAI))
-    assert.equal(key_date_diff(previous, key), 1, `${previous} → ${key} must be one day (step ${day})`)
+    assert.equal(key_date_diff(previous, key), 1, `${previous} -> ${key} must be one day (step ${day})`)
     previous = key
   }
 })

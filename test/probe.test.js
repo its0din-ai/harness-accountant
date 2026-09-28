@@ -170,7 +170,7 @@ test('resolve_api_key reports a clear reason without a credential store', async 
 
 test('resolve_api_key asks for the credential provider non-strictly', async () => {
   // Regression: the provider's fiber is commonly still activating when this
-  // plugin mounts, and strict mode reports such a provider as absent — which
+  // plugin mounts, and strict mode reports such a provider as absent - which
   // surfaced as "credentials service unavailable" on the first probe.
   const calls = []
   const ready = await resolve_api_key(

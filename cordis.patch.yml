@@ -1,4 +1,4 @@
-# harness-accountant — bundle patch.
+# harness-accountant - bundle patch.
 #
 # Inserting one row under this package's own name is all a bundle needs. The
 # web app scans every installed package that declares `dsh.client` into the

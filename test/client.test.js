@@ -2,8 +2,8 @@
  * Client-half smoke tests.
  *
  * The browser half cannot run in Node, so this file supplies just enough of a
- * browser — a module loader, a tiny hook runtime, a stub DOM with the three
- * class hooks the seating logic looks for, and a `fetch` — to prove that the
+ * browser - a module loader, a tiny hook runtime, a stub DOM with the three
+ * class hooks the seating logic looks for, and a `fetch` - to prove that the
  * envelope loads, that `apply` registers a real `settings.section`, that the
  * card is seated above the Settings row, and that the eye toggle masks the
  * digits without changing the currency or the layout.
