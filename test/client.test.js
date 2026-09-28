@@ -176,13 +176,21 @@ async function load_client(options = {}) {
     saved[key] = Object.getOwnPropertyDescriptor(globalThis, key)
   }
 
+  // Mirrors the real shell, verified from the shipped bundles:
+  //   div.<hash>_sidebarCol > div.<hash>_footArea > { footerActions, settingsArea }
+  // The hashes differ per build, so the stub uses the same stable suffixes the
+  // client matches on. An earlier stub invented a `data-pane="sidebar"`
+  // attribute that the real shell does not have.
   const settings_area = make_element('div')
-  settings_area.attributes.class = 'settingsArea'
+  settings_area.attributes.class = 'hHd-Xa_settingsArea'
+  const footer_actions = make_element('div')
+  footer_actions.attributes.class = 'hHd-Xa_footerActions'
   const foot_area = make_element('div')
-  foot_area.attributes.class = 'footArea'
+  foot_area.attributes.class = 'hHd-Xa_footArea'
+  foot_area.append(footer_actions)
   foot_area.append(settings_area)
   const sidebar = make_element('div')
-  sidebar.attributes['data-pane'] = 'sidebar'
+  sidebar.attributes.class = 'pI_x6G_sidebarCol'
   sidebar.append(foot_area)
   const body = make_element('body')
   body.append(sidebar)
@@ -295,6 +303,7 @@ async function load_client(options = {}) {
     body,
     sidebar,
     foot_area,
+    footer_actions,
     settings_area,
     observers,
     roots,
@@ -370,8 +379,11 @@ test('the foot card is seated directly above the Settings row', async () => {
       (child) => child.attributes['data-harness-accountant-foot-card'] !== undefined,
     )
     assert.ok(card, 'the card container should be inside the foot area')
-    assert.equal(app.foot_area.children[0], card)
-    assert.equal(app.foot_area.children[1], app.settings_area)
+    // The real foot is [footerActions, settingsArea]. The card must land
+    // between them: below the footer actions, directly above the Settings row.
+    assert.equal(app.foot_area.children[0], app.footer_actions)
+    assert.equal(app.foot_area.children[1], card)
+    assert.equal(app.foot_area.children[2], app.settings_area)
     assert.deepEqual(app.observers[0].config, { childList: true, subtree: true })
   } finally {
     await app.restore()
@@ -455,8 +467,10 @@ test('the disposer removes the card and disconnects the observer', async () => {
     app.exports.apply(ctx)
     await new Promise((resolve) => setImmediate(resolve))
 
-    const card = app.foot_area.children[0]
-    assert.notEqual(card.attributes['data-harness-accountant-foot-card'], undefined)
+    const card = app.foot_area.children.find(
+      (child) => child.attributes['data-harness-accountant-foot-card'] !== undefined,
+    )
+    assert.ok(card, 'the card container should be inside the foot area')
 
     const effect = ctx.effects.find((entry) => entry.label === 'harness-accountant: sidebar card')
     assert.ok(effect, 'the card effect should be registered under its label')
