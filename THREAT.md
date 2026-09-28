@@ -123,6 +123,14 @@ Both routes are `kind: 'exact'`, so no path traversal or prefix shadowing is
 possible. `is_same_origin_local_request` (`lib/index.js:100`) runs four checks,
 each closing a distinct hole.
 
+**One layer in front, which this package does not own.** In the maintainer's
+current profile the routes additionally sit behind `dsh-web-startup-auth`'s
+session gate, which answers 401 for every registered route until a session cookie
+exists — including third-party RPC routes (E-013). That is defence in depth this
+plugin never designed and **must not depend on**: it is another package's policy,
+it can be uninstalled, and it is absent from a stock profile. The fence below is
+the layer this package owns, and it is the layer that has to hold on its own.
+
 ### T-11 — Any host on the network reading the balance — **MITIGATED**
 Check 1: `request.socket.remoteAddress` must be `127.0.0.1`, `::1`, or
 `::ffff:127.0.0.1`. The web server is assumed to be loopback-bound; this is the
@@ -158,7 +166,10 @@ turn the JSON body into an executable document.
 
 ### T-16 — A local process forging the fence — **ACCEPTED**
 Any process running as the same user can open a loopback socket and set all four
-headers, so the fence stops **browser-origin** attackers, not local ones.
+headers, so the fence stops **browser-origin** attackers, not local ones. A
+browser-origin attacker must also hold a session cookie where the third-party gate
+is installed (see the section preamble), but that is not this package's control
+and is not assumed here.
 
 *Why not mitigated.* A local attacker who can do that can already read
 `ledger.json` (same user) and `~/.dsh/.credentials.yaml` directly. Adding a
@@ -167,7 +178,9 @@ already past it, at the cost of new storage, a new secret to leak, and a pairing
 flow — against the KISS rule.
 
 ### T-17 — No rate limit on `POST /refresh` — **ACCEPTED**
-`/refresh` is unauthenticated beyond the fence and unbounded.
+`/refresh` is unbounded beyond the fence. It is not strictly *unauthenticated* in
+the maintainer's profile — a session is required in front of it (E-013) — but that
+gate belongs to another package, so this model does not count it as a control.
 
 *Why not mitigated.* Concurrent calls already collapse onto one in-flight
 promise, and the balance endpoint is a free read. A rate limiter means new
@@ -339,3 +352,4 @@ key-derived into a string that reaches a log, a route payload, or the DOM.
 | Date | Change |
 | --- | --- |
 | 2026-09-28 | Initial model: 35 threats — 25 mitigated, 2 partial (T-09, T-35), 5 accepted (T-16, T-17, T-22, T-25, T-31), 2 out of scope (T-33, T-34), 1 explicit non-control (T-24) |
+| 2026-09-28 | E-013: recorded that in the maintainer's profile every registered route additionally sits behind `dsh-web-startup-auth`'s session gate. The fence is therefore defence in depth rather than the first gate — and the model explicitly does **not** count the third-party session as a control, because another package can be uninstalled. Section C gained a preamble; T-16 and T-17 reworded to match. |
