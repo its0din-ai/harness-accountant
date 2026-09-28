@@ -24,6 +24,9 @@ function make_element(tag) {
     setAttribute(name, value) {
       element.attributes[name] = value
     },
+    hasAttribute(name) {
+      return element.attributes[name] !== undefined
+    },
     append(child) {
       child.parentElement = element
       element.children.push(child)
@@ -177,7 +180,8 @@ async function load_client(options = {}) {
   }
 
   // Mirrors the real shell, verified from the shipped bundles:
-  //   div.<hash>_sidebarCol > div.<hash>_footArea > { footerActions, settingsArea }
+  //   div.<hash>_frame[data-sidebar-collapsed] > div.<hash>_sidebarCol
+  //     > div.<hash>_footArea > { footerActions, settingsArea }
   // The hashes differ per build, so the stub uses the same stable suffixes the
   // client matches on. An earlier stub invented a `data-pane="sidebar"`
   // attribute that the real shell does not have.
@@ -192,8 +196,14 @@ async function load_client(options = {}) {
   const sidebar = make_element('div')
   sidebar.attributes.class = 'pI_x6G_sidebarCol'
   sidebar.append(foot_area)
+  // The collapsed marker lives on the frame, not on the sidebar, and is set to
+  // `true` only while collapsed - `sidebarCollapsed || void 0` in the real
+  // shell, so React omits the attribute entirely when it is false.
+  const frame = make_element('div')
+  frame.attributes.class = 'pI_x6G_frame'
+  frame.append(sidebar)
   const body = make_element('body')
-  body.append(sidebar)
+  body.append(frame)
 
   const storage = new Map()
   const observers = []
@@ -301,6 +311,7 @@ async function load_client(options = {}) {
     window: window_stub,
     document: document_stub,
     body,
+    frame,
     sidebar,
     foot_area,
     footer_actions,
@@ -384,7 +395,10 @@ test('the foot card is seated directly above the Settings row', async () => {
     assert.equal(app.foot_area.children[0], app.footer_actions)
     assert.equal(app.foot_area.children[1], card)
     assert.equal(app.foot_area.children[2], app.settings_area)
-    assert.deepEqual(app.observers[0].config, { childList: true, subtree: true })
+    // Two observers now share this range: the placement one and the collapse
+    // one, so find them by what they watch rather than by construction order.
+    const placement = app.observers.find((entry) => entry.config?.childList === true)
+    assert.deepEqual(placement.config, { childList: true, subtree: true })
   } finally {
     await app.restore()
   }
@@ -437,6 +451,51 @@ test('the balance, the currency, and the mask toggle render', async () => {
   }
 })
 
+test('the collapsed rail shows today and nothing else', async () => {
+  const app = await load_client()
+  try {
+    app.exports.apply(make_plugin_context())
+    await new Promise((resolve) => setImmediate(resolve))
+
+    const root = app.roots[0]
+    const draw = () => app.render(root.element.type)
+
+    const expanded = text_of(draw()).join(' ')
+    assert.match(expanded, /Balance/)
+    assert.match(expanded, /Today/)
+    assert.match(expanded, /\$0\.02/)
+
+    // The shell marks its frame while the rail is collapsed.
+    app.frame.setAttribute('data-sidebar-collapsed', 'true')
+    const watcher = app.observers.find((entry) => entry.config?.attributeFilter !== undefined)
+    assert.ok(watcher, 'the card should watch the shell collapsed marker')
+    assert.deepEqual(watcher.config.attributeFilter, ['data-sidebar-collapsed'])
+    watcher.callback()
+
+    const rail = draw()
+    // Exactly one string, and it is today's figure: no label, no mask control,
+    // no error line. The balance is not lost, it moves into the tooltip.
+    assert.deepEqual(text_of(rail), ['$0.02'])
+    assert.equal(find_all(rail, (node) => node.props.onClick !== undefined).length, 0)
+    assert.equal(rail.props.title, 'Today $0.02 - balance $4.58')
+
+    // The mask is shared state, not card-local: it still applies to the rail.
+    delete app.frame.attributes['data-sidebar-collapsed']
+    watcher.callback()
+    const eye = find_all(draw(), (node) => node.props.title === 'Hide balance')
+    assert.equal(eye.length, 1)
+    eye[0].props.onClick()
+
+    app.frame.setAttribute('data-sidebar-collapsed', 'true')
+    watcher.callback()
+    const masked_rail = draw()
+    assert.deepEqual(text_of(masked_rail), ['$*.**'])
+    assert.equal(masked_rail.props.title, 'Today $*.** - balance $*.**')
+  } finally {
+    await app.restore()
+  }
+})
+
 test('the settings panel exposes all three windows', async () => {
   const app = await load_client()
   try {
@@ -478,7 +537,7 @@ test('the disposer removes the card and disconnects the observer', async () => {
 
     assert.equal(app.roots[0].container.__unmounted, true)
     assert.equal(app.foot_area.children.includes(card), false)
-    assert.equal(app.observers[0].disconnected, true)
+    assert.ok(app.observers.every((entry) => entry.disconnected === true))
   } finally {
     await app.restore()
   }

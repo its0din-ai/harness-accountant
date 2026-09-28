@@ -5,14 +5,16 @@ DeepSeek balance and spend accounting for the DSH Web GUI.
 Two surfaces, nothing else:
 
 1. **A balance card in the sidebar**, seated directly above the Settings row -
-   current balance with an eye toggle that masks it, plus today's spend.
+   current balance with an eye toggle that masks it, plus today's spend. Collapse
+   the sidebar and the 56px rail has no room for two labelled rows, so the card
+   shows today's spend alone and moves the balance into its tooltip.
 2. **A detailed panel in the Settings modal** - the same balance, with 1 day /
    7 days / 1 month breakdowns, totals, and a per-day spend bar list.
 
 ## What it does not do
 
 No coding-plan quotas, no per-provider adapters, no voucher art, no session
-switching, no i18n dictionaries, no build step. Roughly 1,900 lines covering the
+switching, no i18n dictionaries, no build step. Roughly 2,000 lines covering the
 host half and the browser half, and four runtime files.
 
 ## How it works
@@ -132,8 +134,8 @@ state the loop is in.
 node --test test/
 ```
 
-71 tests: 22 for the ledger, 16 for the probe, 26 for the host routes and the
-request fence, 7 for the client. The host tests mount the real plugin against a fake
+72 tests: 22 for the ledger, 16 for the probe, 26 for the host routes and the
+request fence, 8 for the client. The host tests mount the real plugin against a fake
 context, a stubbed `fetch`, and a throwaway `DSH_HOME`.
 
 ## Security
@@ -150,5 +152,6 @@ path, and the two routes are fenced to same-origin loopback callers.
 The sidebar card uses the same approach as `@linxin666/dsh-usage` (Apache-2.0):
 the sidebar foot's only slot stacks *above* the Settings row and cannot host a
 block, so the card is a plain `div` with its own React root seated by DOM
-surgery and re-seated by a `MutationObserver`. No code was copied; the balance
-and ledger logic here is independent.
+surgery, re-seated by a `MutationObserver`, and switched between its full and
+rail forms by a second one watching the shell's collapsed marker. No code was
+copied; the balance and ledger logic here is independent.
