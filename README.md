@@ -126,7 +126,7 @@ To pin a revision, append a tag or commit to the URL:
 
 ```sh
 dsh plugin --profile web add \
-  git+https://github.com/its0din-ai/harness-accountant.git#v1.0.0
+  git+https://github.com/its0din-ai/harness-accountant.git#v1.0.1
 ```
 
 ### Give it your API key
