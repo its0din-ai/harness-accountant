@@ -4,10 +4,11 @@ DeepSeek balance and spend accounting for the DSH Web GUI.
 
 Two surfaces, nothing else:
 
-1. **A balance card in the sidebar**, seated directly above the Settings row -
-   current balance with an eye toggle that masks it, plus today's spend. Collapse
-   the sidebar and the 56px rail has no room for two labelled rows, so the card
-   shows today's spend alone and moves the balance into its tooltip.
+1. **A card in the sidebar**, seated directly above the Settings row - the current
+   billing tier (peak or off-peak, named and coloured), the balance with an eye
+   toggle that masks it, and today's spend. Collapse the sidebar and the 56px rail
+   has no room for labelled rows, so it keeps the tier as a blinking coloured circle
+   above today's spend, and moves the balance into its tooltip.
 2. **A detailed panel in the Settings modal** - the same balance, with 1 day /
    7 days / 1 month breakdowns, totals, and a per-day spend bar list. Its row in
    the settings nav carries a coin stack instead of the gear the shell draws for
@@ -16,7 +17,7 @@ Two surfaces, nothing else:
 ## What it does not do
 
 No coding-plan quotas, no per-provider adapters, no voucher art, no session
-switching, no i18n dictionaries, no build step. Roughly 2,100 lines covering the
+switching, no i18n dictionaries, no build step. Roughly 2,500 lines covering the
 host half and the browser half, and four runtime files.
 
 ## How it works
@@ -42,6 +43,41 @@ A balance that rises is recorded as a top-up rather than netted against spend.
 `/user/balance` answers with a decimal *string*. Subtracting floats would drift,
 so every amount is parsed into signed integer micro-units (1 unit = 1e-6 of the
 currency) and only formatted back to a string at the edge.
+
+### Peak is decided by the clock, in the browser
+
+DeepSeek bills peak hours at twice the off-peak rate, and publishes the schedule as
+*"01:00 - 04:00 and 06:00 - 10:00 UTC, Monday through Friday, excluding Chinese
+public holidays"*; every other hour, weekends included, is off-peak.
+
+The host does not evaluate that schedule. It **publishes** it - `peak` in the
+`/overview` payload, windows given in minutes from midnight UTC - and the browser
+half owns the clock, because the tier is a pure function of the wall clock and a
+round trip would be strictly worse than reading a clock the browser already has.
+Nothing is polled for it and no fixed ticker is spent on it: exactly one
+`setTimeout` is armed, for the instant the tier next changes, and the tier is always
+recomputed from `Date.now()` rather than advanced by the timer, so a throttled,
+coalesced or sleep-delayed wakeup can only delay the correction, never leave the
+reading stale. A `visibilitychange` refresh covers the tab that slept through the
+boundary altogether.
+
+Since the schedule is in UTC and the comparison is done in UTC, the indicator is
+correct in **any** timezone - the reader's own clock never enters the decision. Only
+the tooltip renders in local time, where it names the boundary and, when that
+boundary is not today, the weekday. That is what makes a Friday readable: the next
+peak is then Monday morning.
+
+Chinese public holidays are deliberately **not** modelled, because this plugin
+carries no holiday calendar. On those days it reports peak while DeepSeek bills
+off-peak. The omission is not silent: `holidays_modelled: false` travels to the
+client and the tooltip says "public holidays not modelled". The schedule itself is
+not configurable - it is DeepSeek's published one, a frozen constant in
+`lib/index.js`.
+
+An unusable schedule - missing, in another reference frame, a malformed window, a
+weekday outside the week - degrades to off-peak with no ticker at all, which is the
+stated default and costs nothing. An indicator that says nothing beats one that
+guesses.
 
 ## Install
 
@@ -151,9 +187,10 @@ state the loop is in.
 node --test test/
 ```
 
-73 tests: 22 for the ledger, 16 for the probe, 26 for the host routes and the
-request fence, 9 for the client. The host tests mount the real plugin against a fake
-context, a stubbed `fetch`, and a throwaway `DSH_HOME`.
+86 tests: 22 for the ledger, 18 for the probe, 29 for the host routes and the
+request fence, 17 for the client. The host tests mount the real plugin against a fake
+context, a stubbed `fetch`, and a throwaway `DSH_HOME`; the client tests drive a
+stub DOM and a pinned clock, because the peak tier is a function of the wall clock.
 
 ## Security
 

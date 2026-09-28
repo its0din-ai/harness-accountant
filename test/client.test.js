@@ -208,6 +208,9 @@ function text_of(node, out = []) {
 const OVERVIEW = {
   ok: true,
   currency: 'USD',
+  // The schedule the host publishes: peak 01:00-04:00 and 06:00-10:00 UTC,
+  // Monday through Friday, with Chinese public holidays deliberately absent.
+  peak: { reference: 'UTC', windows: [[60, 240], [360, 600]], weekdays: [1, 2, 3, 4, 5], holidays_modelled: false },
   balance: { units: 4_580_000, text: '$4.58', is_available: true, wallets: [{ currency: 'USD', text: '$4.58' }] },
   credential_source: 'file',
   last_ok_at: 1_790_000_000_000,
@@ -259,12 +262,26 @@ async function load_client(options = {}) {
 
   const storage = new Map()
   const observers = []
+  const timers = []
+  const document_listeners = new Map()
 
   const document_stub = {
     body,
+    visibilityState: 'visible',
     querySelector: (selector) => query_selector(body, selector),
     querySelectorAll: (selector) => query_selector_all(body, selector),
     createElement: (tag) => make_element(tag),
+    addEventListener: (name, listener) => {
+      if (!document_listeners.has(name)) document_listeners.set(name, new Set())
+      document_listeners.get(name).add(listener)
+    },
+    removeEventListener: (name, listener) => {
+      document_listeners.get(name)?.delete(listener)
+    },
+  }
+
+  function fire_document(name) {
+    for (const listener of Array.from(document_listeners.get(name) ?? [])) listener()
   }
 
   class FakeMutationObserver {
@@ -302,6 +319,17 @@ async function load_client(options = {}) {
     },
     setInterval: () => 1,
     clearInterval: () => {},
+    // Real enough to be driven by hand: the peak ticker arms exactly one timer,
+    // for the instant the tier next changes, and a test fires it itself.
+    setTimeout: (callback, delay) => {
+      const timer = { callback, delay, cleared: false }
+      timers.push(timer)
+      return timer
+    },
+    clearTimeout: (timer) => {
+      if (timer !== undefined && timer !== null) timer.cleared = true
+    },
+    matchMedia: () => ({ matches: options.reduced_motion === true }),
   }
 
   Object.defineProperty(globalThis, 'window', { value: window_stub, configurable: true })
@@ -374,6 +402,8 @@ async function load_client(options = {}) {
     storage,
     render,
     restore,
+    timers,
+    fire_document,
   }
 }
 
@@ -405,6 +435,56 @@ function make_plugin_context() {
 }
 
 // ------------------------------------------------------------------ tests
+
+/**
+ * Peak and off-peak are a function of the wall clock, so a test has to own the
+ * clock. Only `Date.now` is pinned: `new Date(ms)` still behaves, which is what
+ * the tier maths reads.
+ */
+async function with_clock(ms, body) {
+  const real_now = Date.now
+  Date.now = () => ms
+  try {
+    return await body()
+  } finally {
+    Date.now = real_now
+  }
+}
+
+/**
+ * Apply the plugin with the clock pinned to `ms`, let the first fetch settle,
+ * and hand back the root. The pinned instant matters at mount, not at render:
+ * the tier is recomputed when an overview lands, and the render only reads the
+ * snapshot that left behind.
+ */
+function mount_at(app, ms) {
+  return with_clock(ms, async () => {
+    app.exports.apply(make_plugin_context())
+    await new Promise((resolve) => setImmediate(resolve))
+    return app.roots[0]
+  })
+}
+
+/** Every `data-harness-accountant-peak` element in a rendered tree. */
+function peak_rows(tree) {
+  return find_all(tree, (node) => node.props?.['data-harness-accountant-peak'] !== undefined)
+}
+
+/** The one peak ticker still armed. */
+function armed_timer(app) {
+  const live = app.timers.filter((timer) => !timer.cleared)
+  return live[live.length - 1]
+}
+
+const HOUR_MS = 60 * 60 * 1000
+// 2026-09-30 is a Wednesday, so 02:00 UTC is inside the first window and 05:00
+// UTC is in the gap between the two.
+const PEAK_INSTANT = Date.UTC(2026, 8, 30, 2, 0)
+const OFF_PEAK_INSTANT = Date.UTC(2026, 8, 30, 5, 0)
+// 2026-10-02 is a Friday and 2026-10-03 a Saturday: the first is the last peak
+// of the week, the second is the weekend that is off-peak in full.
+const FRIDAY_CLOSE_INSTANT = Date.UTC(2026, 9, 2, 10, 0)
+const SATURDAY_INSTANT = Date.UTC(2026, 9, 3, 2, 0)
 
 test('the envelope exposes apply and the slots injection', async () => {
   const app = await load_client()
@@ -532,7 +612,10 @@ test('the collapsed rail shows today and nothing else', async () => {
     // no error line. The balance is not lost, it moves into the tooltip.
     assert.deepEqual(text_of(rail), ['$0.02'])
     assert.equal(find_all(rail, (node) => node.props.onClick !== undefined).length, 0)
-    assert.equal(rail.props.title, 'Today $0.02 - balance $4.58')
+    assert.match(
+      rail.props.title,
+      /^Today \$0\.02 - balance \$4\.58 - (?:Peak|Off-peak) hours - changes (?:[A-Z][a-z]{2} )?\d{2}:\d{2} - public holidays not modelled$/,
+    )
 
     // The mask is shared state, not card-local: it still applies to the rail.
     delete app.frame.attributes['data-sidebar-collapsed']
@@ -545,7 +628,10 @@ test('the collapsed rail shows today and nothing else', async () => {
     watcher.callback()
     const masked_rail = draw()
     assert.deepEqual(text_of(masked_rail), ['$*.**'])
-    assert.equal(masked_rail.props.title, 'Today $*.** - balance $*.**')
+    assert.match(
+      masked_rail.props.title,
+      /^Today \$\*\.\*\* - balance \$\*\.\*\* - (?:Peak|Off-peak) hours - changes /,
+    )
   } finally {
     await app.restore()
   }
@@ -641,5 +727,173 @@ test('the disposer removes the card and disconnects the observer', async () => {
     assert.ok(app.observers.every((entry) => entry.disconnected === true))
   } finally {
     await app.restore()
+  }
+})
+
+test('the card names the tier the clock is in, above the balance', async () => {
+  const app = await load_client()
+  try {
+    // Wednesday 02:00 UTC is inside the first window, so the tier is peak.
+    const root = await mount_at(app, PEAK_INSTANT)
+    const drawn = await with_clock(PEAK_INSTANT, async () => app.roots[0] && app.render(root.element.type))
+
+    const rows = peak_rows(drawn)
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].props['data-harness-accountant-peak'], 'peak')
+    // Colour is never the only carrier: the words say the same thing, and the
+    // row is the first line of the card, above the balance.
+    const texts = text_of(drawn)
+    assert.equal(texts[0], 'Peak hours')
+    assert.equal(texts[1], 'Balance')
+  } finally {
+    await app.restore()
+  }
+})
+
+test('off-peak is the answer between the windows, and the ticker knows when it ends', async () => {
+  const app = await load_client()
+  try {
+    // 05:00 UTC on the same Wednesday sits in the gap between the two windows.
+    const root = await mount_at(app, OFF_PEAK_INSTANT)
+    const drawn = app.render(root.element.type)
+    assert.equal(peak_rows(drawn)[0].props['data-harness-accountant-peak'], 'off_peak')
+    assert.equal(text_of(drawn)[0], 'Off-peak hours')
+    // Exactly one timer, armed for 06:00 UTC - one hour away, plus the cushion
+    // that lands the wakeup just after the boundary rather than on it.
+    assert.equal(armed_timer(app).delay, HOUR_MS + 250)
+  } finally {
+    await app.restore()
+  }
+})
+
+test('firing the ticker past a boundary flips the tier', async () => {
+  const app = await load_client()
+  try {
+    const root = await mount_at(app, PEAK_INSTANT)
+    const draw = () => app.render(root.element.type)
+    assert.equal(peak_rows(draw())[0].props['data-harness-accountant-peak'], 'peak')
+    // Inside the first window the tier holds until 04:00 UTC.
+    const timer = armed_timer(app)
+    assert.equal(timer.delay, 2 * HOUR_MS + 250)
+
+    // The clock reaches the boundary; the callback recomputes rather than
+    // trusting the timer, so the reading is right regardless of when it fires.
+    await with_clock(Date.UTC(2026, 8, 30, 4, 0), async () => timer.callback())
+
+    assert.equal(peak_rows(draw())[0].props['data-harness-accountant-peak'], 'off_peak')
+    // Off-peak now, until the second window opens two hours later.
+    assert.equal(armed_timer(app).delay, 2 * HOUR_MS + 250)
+  } finally {
+    await app.restore()
+  }
+})
+
+test('the closing minute is already off-peak and the weekend is skipped', async () => {
+  const app = await load_client()
+  try {
+    // 10:00 UTC on a Friday is the closing edge of the last window of the week.
+    // The windows are half-open, so this minute is off-peak...
+    const root = await mount_at(app, FRIDAY_CLOSE_INSTANT)
+    assert.equal(peak_rows(app.render(root.element.type))[0].props['data-harness-accountant-peak'], 'off_peak')
+    // ...and the next window does not open until Monday 01:00 UTC, 63 hours on:
+    // Saturday and Sunday are off-peak in full.
+    assert.equal(armed_timer(app).delay, 63 * HOUR_MS + 250)
+  } finally {
+    await app.restore()
+  }
+})
+
+test('the weekend is off-peak, not a long peak', async () => {
+  const app = await load_client()
+  try {
+    // Saturday 02:00 UTC is the hour that would be peak on a weekday.
+    const root = await mount_at(app, SATURDAY_INSTANT)
+    assert.equal(peak_rows(app.render(root.element.type))[0].props['data-harness-accountant-peak'], 'off_peak')
+    // Monday 01:00 UTC is 47 hours away.
+    assert.equal(armed_timer(app).delay, 47 * HOUR_MS + 250)
+  } finally {
+    await app.restore()
+  }
+})
+
+test('a missing or unusable schedule degrades to off-peak with no ticker', async () => {
+  const unusable = [
+    undefined,
+    { reference: 'local', windows: [[60, 240]], weekdays: [1] },
+    { reference: 'UTC', windows: [[600, 360]], weekdays: [1] },
+    { reference: 'UTC', windows: [[60, 240]], weekdays: [9] },
+    { reference: 'UTC', windows: [[60, 1441]], weekdays: [1] },
+  ]
+  for (const peak of unusable) {
+    const app = await load_client({ overview: { ...OVERVIEW, peak } })
+    try {
+      const root = await mount_at(app, PEAK_INSTANT)
+      // The stated default, and nothing to wait for: a schedule with no
+      // boundaries has no timer, so the client does not spin.
+      assert.equal(peak_rows(app.render(root.element.type))[0].props['data-harness-accountant-peak'], 'off_peak')
+      assert.equal(armed_timer(app), undefined)
+    } finally {
+      await app.restore()
+    }
+  }
+})
+
+test('the rail dot is yellow in peak and green off it', async () => {
+  const cases = [
+    [PEAK_INSTANT, '#f0c000'],
+    [OFF_PEAK_INSTANT, '#38c172'],
+  ]
+  for (const [instant, colour] of cases) {
+    const app = await load_client()
+    try {
+      const root = await mount_at(app, instant)
+      app.frame.setAttribute('data-sidebar-collapsed', 'true')
+      app.observers.find((entry) => entry.config?.attributeFilter !== undefined).callback()
+
+      const rail = app.render(root.element.type)
+      const dot = peak_rows(rail)[0]
+      assert.equal(dot.props.style.background, colour)
+      assert.equal(dot.props.style.borderRadius, '999px')
+      // The dot carries the tier as colour alone; today's figure is unchanged.
+      assert.deepEqual(text_of(rail), ['$0.02'])
+    } finally {
+      await app.restore()
+    }
+  }
+})
+
+test('the rail dot blinks once and honours reduced motion', async () => {
+  const app = await load_client()
+  try {
+    const root = await mount_at(app, PEAK_INSTANT)
+    app.frame.setAttribute('data-sidebar-collapsed', 'true')
+    app.observers.find((entry) => entry.config?.attributeFilter !== undefined).callback()
+    const dot = peak_rows(app.render(root.element.type))[0]
+
+    const frames = []
+    const node = { animate: (key, options) => frames.push({ key, options }) }
+    // The stub never invokes refs, so the test drives it - twice, because React
+    // hands a fresh node on every render and the animation must not restart.
+    dot.props.ref(node)
+    dot.props.ref(node)
+    assert.equal(frames.length, 1)
+    assert.deepEqual(frames[0].key, [{ opacity: 1 }, { opacity: 0.25 }, { opacity: 1 }])
+    assert.equal(frames[0].options.iterations, Infinity)
+    assert.equal(frames[0].options.duration, 1400)
+  } finally {
+    await app.restore()
+  }
+
+  const still = await load_client({ reduced_motion: true })
+  try {
+    const root = await mount_at(still, PEAK_INSTANT)
+    still.frame.setAttribute('data-sidebar-collapsed', 'true')
+    still.observers.find((entry) => entry.config?.attributeFilter !== undefined).callback()
+    const dot = peak_rows(still.render(root.element.type))[0]
+    let animated = 0
+    dot.props.ref({ animate: () => { animated += 1 } })
+    assert.equal(animated, 0)
+  } finally {
+    await still.restore()
   }
 })

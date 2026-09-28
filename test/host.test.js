@@ -13,7 +13,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { API_PREFIX, apply, config_value, inject, is_same_origin_local_request, next_poll_delay_sec } from '../lib/index.js'
+import { API_PREFIX, PEAK_SCHEDULE, apply, config_value, inject, is_same_origin_local_request, next_poll_delay_sec } from '../lib/index.js'
 
 const API_KEY = `sk-${'a'.repeat(32)}`
 const ORIGIN = '127.0.0.1:3080'
@@ -244,6 +244,34 @@ test('the first overview paint already carries a live balance', async (t) => {
   assert.equal(body.ranges.day.days, 1)
   assert.equal(body.ranges.week.days, 7)
   assert.equal(body.ranges.month.days, 30)
+  await app.dispose()
+})
+
+test('the overview carries the peak schedule the client times itself against', async (t) => {
+  const app = await mount(t)
+  const body = body_of(await app.call(`${API_PREFIX}/overview`))
+
+  // The host does not decide peak from off-peak - the client holds the clock,
+  // so a round trip would be strictly worse than reading it. The schedule
+  // travels as data instead, in minutes from midnight UTC.
+  assert.deepEqual(body.peak, {
+    reference: 'UTC',
+    windows: [
+      [60, 240],
+      [360, 600],
+    ],
+    weekdays: [1, 2, 3, 4, 5],
+    holidays_modelled: false,
+  })
+  // The same schedule on every poll: the client compares what arrived against
+  // what it holds, so a schedule that changed shape between polls would make
+  // the tier flicker for no reason.
+  const again = body_of(await app.call(`${API_PREFIX}/overview`))
+  assert.deepEqual(again.peak, body.peak)
+  // Chinese public holidays are excluded from peak on DeepSeek's published
+  // schedule and are deliberately not modelled here. The flag carries that
+  // admission to the client so the tooltip can say so out loud.
+  assert.equal(body.peak.holidays_modelled, false)
   await app.dispose()
 })
 
