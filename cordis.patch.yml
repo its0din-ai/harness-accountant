@@ -1,0 +1,21 @@
+# harness-accountant — bundle patch.
+#
+# Inserting one row under this package's own name is all a bundle needs. The
+# web app scans every installed package that declares `dsh.client` into the
+# plugin roster and serves its `lib/client.js`; the host half is loaded from
+# `lib/index.js` by this row.
+#
+# The settings below are the schema defaults, written out so they are visible
+# and editable from the profile. Removing a key falls back to the same value.
+- insert:
+    - id: harness-accountant
+      name: harness-accountant
+      config:
+        enabled: true
+        # Seconds between balance probes. Clamped to >= 30 by the plugin.
+        poll_interval_sec: 60
+        # How much daily history the ledger keeps. Clamped to [7, 730].
+        retain_days: 400
+        # Credential reference resolved through ctx.credentials.
+        api_key_env: DEEPSEEK_API_KEY
+        api_base_url: https://api.deepseek.com

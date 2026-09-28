@@ -1,0 +1,35 @@
+# Dependencies.
+#
+# The dev shim under node_modules/ is a set of ABSOLUTE symlinks into
+# ~/.dsh/profiles/web/node_modules. Committing it would bake one machine's
+# profile path into the repo and break every other checkout. Recreate it per
+# the README's "resolution requirement" section instead.
+node_modules/
+
+# Secrets.
+#
+# The credential resolution chain includes <cwd>/.env as a source, so a .env
+# dropped in this directory would be a live secret sitting in the working tree.
+.env
+.env.*
+!.env.example
+
+# Runtime state.
+#
+# The ledger normally lives under $DSH_HOME, outside this tree, but a test run
+# or a changed DSH_HOME can drop one here. It records real spend.
+ledger.json
+ledger.json.tmp
+*.tmp
+
+# Local noise.
+*.bak
+*.log
+.DS_Store
+Thumbs.db
+
+# Editors.
+.idea/
+.vscode/
+*.swp
+*~
