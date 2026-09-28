@@ -9,9 +9,9 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { API_PREFIX, apply, config_value, inject, is_same_origin_local_request, next_poll_delay_sec } from '../lib/index.js'
 
@@ -282,8 +282,9 @@ test('the refresh route probes and persists a 0600 ledger', async (t) => {
   assert.equal(file.mode & 0o777, 0o600)
 
   const ledger = JSON.parse(await readFile(app.ledger_path, 'utf8'))
-  assert.equal(ledger.version, 1)
+  assert.equal(ledger.version, 2)
   assert.equal(ledger.currency, 'USD')
+  assert.equal(ledger.accounting_utc_offset_minutes, 480, 'the file records how its day keys were bucketed')
   const dates = Object.keys(ledger.days)
   assert.equal(dates.length, 1)
   assert.equal(ledger.days[dates[0]].closing_units, 4_580_000)
@@ -305,6 +306,75 @@ test('a stored ledger is read back after a restart', async (t) => {
   assert.equal(body.balance.units, 4_580_000)
   assert.match(body.error, /request failed/)
   await second.dispose()
+})
+
+/**
+ * Seed a `DSH_HOME` with a ledger document this build has to decide about.
+ * @returns the home directory and the ledger path inside it.
+ */
+async function seed_ledger(t, document) {
+  const home = await mkdtemp(join(tmpdir(), 'harness-accountant-'))
+  t.after(() => rm(home, { recursive: true, force: true }))
+  const path = join(home, 'harness-accountant', 'ledger.json')
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, document, { mode: 0o600 })
+  return { home, path }
+}
+
+test('a version-1 ledger is migrated rather than discarded', async (t) => {
+  const seeded = await seed_ledger(
+    t,
+    JSON.stringify({
+      version: 1,
+      currency: 'USD',
+      days: {
+        '2026-09-27': {
+          opening_units: 0,
+          closing_units: 5_000_000,
+          spend_units: 0,
+          topup_units: 5_000_000,
+          samples: 1,
+          last_at: 1,
+        },
+      },
+    }),
+  )
+
+  const app = await mount(t, { home: seeded.home })
+  const body = body_of(await app.call(`${API_PREFIX}/overview`))
+  assert.equal(body.ledger_notice, 'ledger upgraded from schema version 1 to 2')
+  assert.equal(body.error, undefined)
+
+  await app.call(`${API_PREFIX}/refresh`, make_request({ method: 'POST' }))
+  const stored = JSON.parse(await readFile(seeded.path, 'utf8'))
+  assert.equal(stored.version, 2)
+  assert.equal(stored.accounting_utc_offset_minutes, 480)
+  assert.ok(stored.days['2026-09-27'], 'the migrated day survived the first write')
+  await app.dispose()
+})
+
+test('a ledger this build refuses to read is moved aside, not overwritten', async (t) => {
+  const seeded = await seed_ledger(
+    t,
+    JSON.stringify({ version: 99, currency: 'USD', accounting_utc_offset_minutes: 480, days: {} }),
+  )
+
+  const app = await mount(t, { home: seeded.home, fetch_throws: true })
+  const body = body_of(await app.call(`${API_PREFIX}/overview`))
+
+  assert.match(body.error, /request failed/)
+  assert.match(body.ledger_notice, /newer than this plugin understands/)
+  assert.match(body.ledger_notice, /moved aside/)
+  assert.equal(
+    await readFile(seeded.path, 'utf8').catch(() => undefined),
+    undefined,
+    'the refused file is no longer at the ledger path',
+  )
+
+  const set_aside = await readFile(`${seeded.path}.incompatible`, 'utf8')
+  assert.equal(JSON.parse(set_aside).version, 99, 'the refused document is preserved verbatim')
+  assert.equal((await stat(`${seeded.path}.incompatible`)).mode & 0o777, 0o600, 'the copy keeps its mode')
+  await app.dispose()
 })
 
 // ------------------------------------------------------------- degradation

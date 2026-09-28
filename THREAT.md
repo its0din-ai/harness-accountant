@@ -197,7 +197,11 @@ retry loop) for no gain against a caller who could call `/overview` instead.
 
 ### T-18 - Another local user reading the ledger - **MITIGATED**
 The directory is created `0700`, and the file is written `0600` via a temp file
-plus `rename`. Covered by *the refresh route probes and persists a 0600 ledger*.
+plus `rename`. A document this build refuses to read is set aside as
+`ledger.json.incompatible` in the same directory; `rename` does not change the
+mode, so that copy is `0600` too. Covered by *the refresh route probes and
+persists a 0600 ledger* and *a ledger this build refuses to read is moved aside,
+not overwritten*.
 
 ### T-19 - A torn or interleaved ledger write - **MITIGATED**
 Writes are serialized through one non-rejecting promise chain
@@ -231,8 +235,10 @@ never corruption: the ledger stays schema-valid.
 
 *Residual, named:* changing the configured offset re-buckets **future** samples
 only. Days already written keep the keys they were written with, so a change leaves
-a one-time seam in the series rather than silently rewriting history. Nothing reads
-the offset back out of the file, because the file does not record it (see B-04).
+a one-time seam in the series rather than silently rewriting history. The file
+records the offset that was in force at its last write
+(`accounting_utc_offset_minutes`, schema version 2), so the seam is legible after
+the fact; nothing re-keys existing days from it.
 
 ---
 
@@ -371,3 +377,4 @@ key-derived into a string that reaches a log, a route payload, or the DOM.
 | 2026-09-28 | B-03 (E-017): **T-09 moved from partial to mitigated.** The probe counts the body as it streams and refuses past `max_response_bytes` (default 65536, schema-bounded to `[1024, 1048576]`); a declared `content-length` over the ceiling short-circuits before the body is touched, and a response with no readable stream is refused rather than read unbounded. Totals become 26 mitigated, 1 partial (T-35), 5 accepted, 2 out of scope, 1 non-control. |
 | 2026-09-28 | E-016 (B-01): day keys now come from a configured fixed UTC offset instead of the host's local zone, so the timezone half of **T-22** is closed and the remainder is narrowed to a manual clock jump. T-22 reworded; its residual (an offset change re-buckets future samples only, and the file does not record the offset) is named rather than implied. |
 | 2026-09-28 | B-02 (E-018): the poll loop became a `setTimeout` chain with backoff - the configured interval for the first 3 consecutive failures, then doubling per failure to a 16x cap, reset by any successful reading. No threat changed status; **T-27** was reworded, because "the interval calls `.unref()`" is no longer the mechanism. This closes a correctness gap (`PHASE.md`), not a threat. |
+| 2026-09-28 | B-04 (E-019): the on-disk schema moved to version 2 and gained `accounting_utc_offset_minutes`; a version-1 document is migrated by table lookup, and anything this build cannot read is refused with a specific reason and moved aside to `ledger.json.incompatible` instead of being overwritten by the next write. No threat changed status; **T-18** gained the set-aside copy and **T-22**'s residual lost its "the file does not record the offset" half. |

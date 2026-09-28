@@ -226,33 +226,88 @@ test('serialize then deserialize round-trips', () => {
   const ledger = create_ledger('USD')
   fold(ledger, { at: at(2026, 9, 28, 9), units: 5_000_000, currency: 'USD' })
   fold(ledger, { at: at(2026, 9, 28, 10), units: 4_000_000, currency: 'USD' })
+  ledger.accounting_utc_offset_minutes = -300
   const restored = deserialize_ledger(serialize_ledger(ledger))
-  assert.equal(restored.version, LEDGER_VERSION)
-  assert.equal(restored.currency, 'USD')
-  assert.deepEqual(restored.days['2026-09-28'], ledger.days['2026-09-28'])
+  assert.equal(restored.status, 'ready')
+  assert.equal(restored.migrated_from, undefined, 'a current document is not migrated')
+  assert.equal(restored.ledger.version, LEDGER_VERSION)
+  assert.equal(restored.ledger.currency, 'USD')
+  assert.equal(restored.ledger.accounting_utc_offset_minutes, -300, 'the offset survives the round trip')
+  assert.deepEqual(restored.ledger.days['2026-09-28'], ledger.days['2026-09-28'])
 })
 
-test('deserialize_ledger rejects malformed documents instead of repairing them', () => {
+test('a version-1 document is migrated rather than refused', () => {
+  const v1 = JSON.stringify({
+    version: 1,
+    currency: 'CNY',
+    days: {
+      '2026-09-28': { opening_units: 0, closing_units: 1, spend_units: 1, topup_units: 0, samples: 2, last_at: 1 },
+    },
+  })
+  const result = deserialize_ledger(v1)
+  assert.equal(result.status, 'ready')
+  assert.equal(result.migrated_from, 1)
+  assert.equal(result.ledger.version, LEDGER_VERSION)
+  assert.equal(result.ledger.currency, 'CNY')
+  assert.equal(
+    result.ledger.accounting_utc_offset_minutes,
+    DEFAULT_UTC_OFFSET_MINUTES,
+    'version 1 could only have bucketed days at the default offset',
+  )
+  assert.equal(result.ledger.days['2026-09-28'].spend_units, 1)
+})
+
+test('a document older than the first migration is refused with a reason', () => {
+  const result = deserialize_ledger(JSON.stringify({ version: 0, currency: 'USD', days: {} }))
+  assert.equal(result.status, 'failed')
+  assert.match(result.reason, /version 0 is older/)
+})
+
+test('a document from a newer plugin is refused with a reason', () => {
+  const result = deserialize_ledger(JSON.stringify({ version: LEDGER_VERSION + 1, currency: 'USD', days: {} }))
+  assert.equal(result.status, 'failed')
+  assert.match(result.reason, /newer than this plugin understands/)
+})
+
+test('deserialize_ledger refuses malformed documents instead of repairing them', () => {
+  const day = { opening_units: 0, closing_units: 0, spend_units: 0, topup_units: 0, samples: 0, last_at: 0 }
+  const current = (overrides) =>
+    JSON.stringify({
+      version: LEDGER_VERSION,
+      currency: 'USD',
+      accounting_utc_offset_minutes: DEFAULT_UTC_OFFSET_MINUTES,
+      days: {},
+      ...overrides,
+    })
   const bad = [
-    'not json',
-    'null',
-    '[]',
-    JSON.stringify({ version: 2, currency: 'USD', days: {} }),
-    JSON.stringify({ version: 1, currency: 'EUR', days: {} }),
-    JSON.stringify({ version: 1, currency: 'USD', days: [] }),
-    JSON.stringify({ version: 1, currency: 'USD', days: { 'not-a-date': {} } }),
-    JSON.stringify({ version: 1, currency: 'USD', days: { '2026-09-28': {} } }),
-    JSON.stringify({ version: 1, currency: 'USD', days: { '2026-09-28': { opening_units: 1.5, closing_units: 0, spend_units: 0, topup_units: 0, samples: 0, last_at: 0 } } }),
-    JSON.stringify({ version: 1, currency: 'USD', days: { '2026-09-28': { opening_units: 0, closing_units: 0, spend_units: -1, topup_units: 0, samples: 0, last_at: 0 } } }),
+    ['not json', /not valid JSON/],
+    ['null', /not a JSON object/],
+    ['[]', /not a JSON object/],
+    ['"4.58"', /not a JSON object/],
+    [JSON.stringify({ currency: 'USD', days: {} }), /version is missing/],
+    [current({ version: 2.5 }), /version is missing/],
+    [current({ currency: 'EUR' }), /currency/],
+    [current({ accounting_utc_offset_minutes: undefined }), /accounting_utc_offset_minutes/],
+    [current({ accounting_utc_offset_minutes: 900 }), /accounting_utc_offset_minutes/],
+    [current({ accounting_utc_offset_minutes: '480' }), /accounting_utc_offset_minutes/],
+    [current({ days: [] }), /days is not a JSON object/],
+    [current({ days: { 'not-a-date': day } }), /not a date/],
+    [current({ days: { '2026-09-28': {} } }), /2026-09-28 does not match/],
+    [current({ days: { '2026-09-28': { ...day, opening_units: 1.5 } } }), /does not match/],
+    [current({ days: { '2026-09-28': { ...day, spend_units: -1 } } }), /does not match/],
   ]
-  for (const text of bad) {
-    assert.equal(deserialize_ledger(text), undefined, `expected rejection for ${text}`)
+  for (const [text, pattern] of bad) {
+    const result = deserialize_ledger(text)
+    assert.equal(result.status, 'failed', `expected refusal for ${text}`)
+    assert.match(result.reason, pattern, `unexpected reason for ${text}`)
   }
 })
 
 test('deserialize_ledger ignores prototype-polluting keys', () => {
-  const polluted = '{"version":1,"currency":"USD","days":{"__proto__":{"spend_units":999}}}'
-  assert.equal(deserialize_ledger(polluted), undefined)
+  const polluted = `{"version":${LEDGER_VERSION},"currency":"USD","accounting_utc_offset_minutes":480,"days":{"__proto__":{"spend_units":999}}}`
+  const result = deserialize_ledger(polluted)
+  assert.equal(result.status, 'failed')
+  assert.match(result.reason, /not a date/)
   assert.equal({}.spend_units, undefined, 'Object.prototype was not touched')
 })
 
