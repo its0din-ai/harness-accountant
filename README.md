@@ -41,32 +41,50 @@ currency) and only formatted back to a string at the edge.
 
 ## Install
 
-From a checkout at `/home/bridle/dsh/harness-accountant`:
+Hosted at
+[github.com/its0din-ai/harness-accountant](https://github.com/its0din-ai/harness-accountant).
 
 ```sh
 # 1. back up the profile wiring first — this is the rollback
 cp ~/.dsh/profiles/web/package.json      ~/.dsh/profiles/web/package.json.bak
 cp ~/.dsh/profiles/web/cordis.patch.yml  ~/.dsh/profiles/web/cordis.patch.yml.bak
 
-# 2. install
-dsh plugin --profile web add link:/home/bridle/dsh/harness-accountant
+# 2. install from GitHub
+dsh plugin --profile web add \
+  git+https://github.com/its0din-ai/harness-accountant.git
 ```
 
 Then reload the GUI at http://127.0.0.1:3080.
 
+To pin a revision, append a tag or commit to the URL:
+
+```sh
+dsh plugin --profile web add \
+  git+https://github.com/its0din-ai/harness-accountant.git#v0.1.0
+```
+
 ### The resolution requirement
 
-A `link:` install resolves from the **realpath** of this directory, so
-`@deepseek-ai/schemastery` and `@deepseek-ai/dsh-credentials` must be findable
-here — not from the profile's `node_modules`. A dev shim is already in place:
+A `link:` install resolves from the **realpath** of the working copy, so
+`@deepseek-ai/schemastery`, `@deepseek-ai/dsh-credentials`, and
+`@deepseek-ai/cordis` must be findable there — not from the profile's
+`node_modules`. This affects **local development only**; an install from
+GitHub resolves them through the profile tree and needs nothing.
 
-```
-node_modules/@deepseek-ai/{schemastery,dsh-credentials,cordis}
-  -> ~/.dsh/profiles/web/node_modules/@deepseek-ai/<pkg>
-```
+To develop against a working copy:
 
-An installed (non-`link:`) copy resolves them through the profile tree instead
-and needs no shim.
+```sh
+git clone https://github.com/its0din-ai/harness-accountant
+cd harness-accountant
+
+mkdir -p node_modules/@deepseek-ai
+for pkg in cordis schemastery dsh-credentials; do
+  ln -s ~/.dsh/profiles/web/node_modules/@deepseek-ai/"$pkg" \
+        node_modules/@deepseek-ai/"$pkg"
+done
+
+dsh plugin --profile web add link:"$PWD"
+```
 
 ## Configuration
 

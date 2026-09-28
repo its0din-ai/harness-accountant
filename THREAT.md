@@ -314,7 +314,8 @@ vendored copy would remove the dependency but add a fork to maintain.
 ## How to re-verify after a change
 
 ```sh
-cd /home/bridle/dsh/harness-accountant
+git clone https://github.com/its0din-ai/harness-accountant
+cd harness-accountant
 
 # 1. the suite, including the fence, the 0600 ledger, and the no-secret assertions
 node --test test/

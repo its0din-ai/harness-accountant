@@ -5,6 +5,14 @@
   "description": "DeepSeek balance and spend accounting for the DSH Web GUI: a sidebar balance card and a Settings breakdown for 1 day / 7 days / 1 month.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/its0din-ai/harness-accountant.git"
+  },
+  "homepage": "https://github.com/its0din-ai/harness-accountant#readme",
+  "bugs": {
+    "url": "https://github.com/its0din-ai/harness-accountant/issues"
+  },
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
