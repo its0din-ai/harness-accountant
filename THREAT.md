@@ -271,7 +271,9 @@ would be a correctness bug with financial consequences.
 ## F. Availability and robustness
 
 ### T-27 - The poll timer holding the host process open - **MITIGATED**
-The interval calls `.unref()`, so polling never keeps the process alive.
+Every scheduled wait calls `.unref()`, so polling never keeps the process alive. Since
+B-02 (E-018) the loop is a chain of one `setTimeout` at a time rather than a single
+`setInterval`; the guard is applied to each timer the chain arms, not just the first.
 
 ### T-28 - Concurrent probes racing each other - **MITIGATED**
 `run_probe` returns a shared `state.probe_promise`, so N callers join one
@@ -368,3 +370,4 @@ key-derived into a string that reaches a log, a route payload, or the DOM.
 | 2026-09-28 | E-013: recorded that in the maintainer's profile every registered route additionally sits behind `dsh-web-startup-auth`'s session gate. The fence is therefore defence in depth rather than the first gate - and the model explicitly does **not** count the third-party session as a control, because another package can be uninstalled. Section C gained a preamble; T-16 and T-17 reworded to match. |
 | 2026-09-28 | B-03 (E-017): **T-09 moved from partial to mitigated.** The probe counts the body as it streams and refuses past `max_response_bytes` (default 65536, schema-bounded to `[1024, 1048576]`); a declared `content-length` over the ceiling short-circuits before the body is touched, and a response with no readable stream is refused rather than read unbounded. Totals become 26 mitigated, 1 partial (T-35), 5 accepted, 2 out of scope, 1 non-control. |
 | 2026-09-28 | E-016 (B-01): day keys now come from a configured fixed UTC offset instead of the host's local zone, so the timezone half of **T-22** is closed and the remainder is narrowed to a manual clock jump. T-22 reworded; its residual (an offset change re-buckets future samples only, and the file does not record the offset) is named rather than implied. |
+| 2026-09-28 | B-02 (E-018): the poll loop became a `setTimeout` chain with backoff - the configured interval for the first 3 consecutive failures, then doubling per failure to a 16x cap, reset by any successful reading. No threat changed status; **T-27** was reworded, because "the interval calls `.unref()`" is no longer the mechanism. This closes a correctness gap (`PHASE.md`), not a threat. |

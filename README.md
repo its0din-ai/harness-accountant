@@ -12,8 +12,8 @@ Two surfaces, nothing else:
 ## What it does not do
 
 No coding-plan quotas, no per-provider adapters, no voucher art, no session
-switching, no i18n dictionaries, no build step. Roughly 1,380 lines of source
-and four runtime files.
+switching, no i18n dictionaries, no build step. Roughly 1,700 lines covering the
+host half and the browser half, and four runtime files.
 
 ## How it works
 
@@ -94,7 +94,7 @@ The schema lives in `lib/index.js` and the defaults are written out in
 | key | default | notes |
 | --- | --- | --- |
 | `enabled` | `true` | `false` stops all background probing; routes still serve the ledger, and an explicit refresh still probes |
-| `poll_interval_sec` | `60` | clamped to `>= 30` regardless of what is configured |
+| `poll_interval_sec` | `60` | the healthy cadence, clamped to `>= 30` regardless of what is configured. Consecutive failures stretch it: see below |
 | `retain_days` | `400` | clamped to `[7, 730]` |
 | `accounting_utc_offset_minutes` | `480` | the day boundary, as a fixed offset from UTC. `480` is UTC+08:00, DeepSeek's billing day. Set `0` for UTC or your own offset for a local day. It is an offset, not a timezone: it does not model daylight saving |
 | `api_key_env` | `DEEPSEEK_API_KEY` | a credential *reference*, resolved per probe |
@@ -109,15 +109,24 @@ host's timezone, so the service and any other process bucket the same instant in
 the same day. The default follows DeepSeek's billing day rather than the operator's
 local one, because the bill being accounted for is DeepSeek's.
 
+A failing probe does not retry forever at the same rate. The first three consecutive
+failures keep the configured cadence, because a service that blinks once should be
+retried normally; after that each further failure doubles the wait, up to sixteen times
+the configured interval. One successful reading clears the streak and the wait goes
+straight back to the base. The backing-off wait is not configurable - the three numbers
+are constants in `lib/index.js`. The current streak and the pending wait are both in the
+`/overview` payload (`consecutive_failures`, `next_probe_in_sec`) if you want to see the
+state the loop is in.
+
 ## Development
 
 ```sh
 node --test test/
 ```
 
-51 tests: 15 for the ledger, 10 for the probe, 19 for the host routes and the
-request fence. The host tests mount the real plugin against a fake context, a
-stubbed `fetch`, and a throwaway `DSH_HOME`.
+66 tests: 19 for the ledger, 16 for the probe, 24 for the host routes and the
+request fence, 7 for the client. The host tests mount the real plugin against a fake
+context, a stubbed `fetch`, and a throwaway `DSH_HOME`.
 
 ## Security
 

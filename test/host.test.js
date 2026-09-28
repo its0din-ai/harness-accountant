@@ -13,7 +13,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { API_PREFIX, apply, config_value, inject, is_same_origin_local_request } from '../lib/index.js'
+import { API_PREFIX, apply, config_value, inject, is_same_origin_local_request, next_poll_delay_sec } from '../lib/index.js'
 
 const API_KEY = `sk-${'a'.repeat(32)}`
 const ORIGIN = '127.0.0.1:3080'
@@ -394,4 +394,84 @@ test('inject waits for the initialized credential provider', () => {
   // the reference map (`dsh-credentials-local/lib/index.js:647`). The first
   // probe therefore read an empty store and the ledger was never written.
   assert.deepEqual(inject, ['webServer', 'credentials'])
+})
+
+// ------------------------------------------------------------ poll backoff
+
+test('next_poll_delay_sec holds the cadence, doubles past the grace, then caps', () => {
+  // Three failures are tolerated at the configured interval.
+  assert.equal(next_poll_delay_sec(60, 0), 60)
+  assert.equal(next_poll_delay_sec(60, 1), 60)
+  assert.equal(next_poll_delay_sec(60, 3), 60)
+  // Then each further consecutive failure doubles the wait ...
+  assert.equal(next_poll_delay_sec(60, 4), 120)
+  assert.equal(next_poll_delay_sec(60, 5), 240)
+  assert.equal(next_poll_delay_sec(60, 6), 480)
+  assert.equal(next_poll_delay_sec(60, 7), 960)
+  // ... up to sixteen times the base, which is as bad as it gets.
+  assert.equal(next_poll_delay_sec(60, 8), 960)
+  assert.equal(next_poll_delay_sec(60, 500), 960)
+})
+
+test('next_poll_delay_sec refuses nonsense without inventing a huge wait', () => {
+  // A missing or unusable base falls back to the floor the poll loop applies.
+  assert.equal(next_poll_delay_sec(undefined, 0), 30)
+  assert.equal(next_poll_delay_sec(0, 0), 30)
+  assert.equal(next_poll_delay_sec(-5, 0), 30)
+  assert.equal(next_poll_delay_sec(NaN, 0), 30)
+  // A missing or unusable streak is read as "no failures yet", never as more.
+  assert.equal(next_poll_delay_sec(60, undefined), 60)
+  assert.equal(next_poll_delay_sec(60, -3), 60)
+  assert.equal(next_poll_delay_sec(60, NaN), 60)
+  assert.equal(next_poll_delay_sec(60, Infinity), 60)
+  // A fraction is truncated toward zero rather than rounded up.
+  assert.equal(next_poll_delay_sec(60, 4.9), 120)
+  // The grace period is overridable, including down to zero.
+  assert.equal(next_poll_delay_sec(60, 1, 0), 120)
+  assert.equal(next_poll_delay_sec(60, 1, 10), 60)
+  // A negative grace is not "no grace" - it is unusable, so it falls back to
+  // the documented default rather than making the backoff start immediately.
+  assert.equal(next_poll_delay_sec(60, 12, -1), next_poll_delay_sec(60, 12))
+  assert.equal(next_poll_delay_sec(60, 12, -1), 960)
+})
+
+test('a failing probe backs the poll interval off, and a success resets it', async (t) => {
+  // `fetch_throws` is read live from this object on every call, so the test can
+  // heal the origin halfway through without unmounting the plugin.
+  const options = { config: { poll_interval_sec: 30 }, fetch_throws: true }
+  const app = await mount(t, options)
+
+  // Drive the failure path one probe at a time. The first probe is fired by
+  // activation itself, so the streak the first response reports is not fixed -
+  // collect until the streak is well past the grace period and assert on the
+  // pairs rather than on a fixed iteration count.
+  const steps = []
+  let body
+  for (let i = 0; i < 12 && (body === undefined || body.consecutive_failures < 8); i += 1) {
+    body = body_of(await app.call(`${API_PREFIX}/refresh`, make_request({ method: 'POST' })))
+    steps.push({ streak: body.consecutive_failures, delay: body.next_probe_in_sec })
+  }
+
+  assert.ok(body.consecutive_failures >= 8, 'the failure path should have been exercised')
+  assert.ok(typeof body.error === 'string' && body.error.length > 0)
+
+  // Every observed pair is the policy's own answer for that streak.
+  for (const step of steps) assert.equal(step.delay, next_poll_delay_sec(30, step.streak))
+
+  const delay_at = new Map(steps.map((step) => [step.streak, step.delay]))
+  assert.equal(delay_at.get(3), 30, 'the grace period keeps the configured cadence')
+  assert.equal(delay_at.get(4), 60)
+  assert.equal(delay_at.get(5), 120)
+  assert.equal(delay_at.get(8), 480, 'the backoff caps at sixteen times the base')
+  assert.ok(delay_at.get(8) > delay_at.get(3), 'the interval must actually grow')
+
+  // The origin comes back: one good reading clears the streak and the wait.
+  options.fetch_throws = false
+  body = body_of(await app.call(`${API_PREFIX}/refresh`, make_request({ method: 'POST' })))
+  assert.equal(body.consecutive_failures, 0)
+  assert.equal(body.next_probe_in_sec, 30)
+  assert.equal(body.error, undefined)
+  assert.equal(body.balance.text, '$4.58')
+
+  await app.dispose()
 })
