@@ -55,23 +55,66 @@ function make_element(tag) {
     querySelector(selector) {
       return query_selector(element, selector)
     },
+    querySelectorAll(selector) {
+      return query_selector_all(element, selector)
+    },
+    // A getter, like the real DOM: `textContent` walks the whole subtree, so a
+    // nav cell can be matched on the label a span inside it carries.
+    get textContent() {
+      let text = ''
+      walk(element, (node) => {
+        if (typeof node.text === 'string') text += node.text
+      })
+      return text
+    },
   }
   return element
 }
 
+/** A text node, the one thing `make_element` cannot express. */
+function make_text(value) {
+  return { text: value, parentElement: null }
+}
+
+/**
+ * One settings-nav row as the shell draws it: a `<hash>_navCell` button holding
+ * a `<hash>_navIcon` svg (the gear: two paths) and a `<hash>_navLabel` span.
+ * The shell builds this, not this plugin, so the test has to build it by hand.
+ */
+function make_nav_cell(label, path_count = 2) {
+  const svg = make_element('svg')
+  svg.attributes.class = 'VOzbGW_navIcon'
+  svg.attributes.viewBox = '0 0 16 16'
+  for (let index = 0; index < path_count; index += 1) {
+    const path = make_element('path')
+    path.attributes.d = `gear-path-${index}`
+    path.attributes.stroke = 'currentColor'
+    svg.append(path)
+  }
+  const span = make_element('span')
+  span.attributes.class = 'VOzbGW_navLabel'
+  span.append(make_text(label))
+  const button = make_element('button')
+  button.attributes.class = 'VOzbGW_navCell'
+  button.append(svg)
+  button.append(span)
+  return { button, svg }
+}
+
 function matches_selector(element, selector) {
+  const attributes = element.attributes ?? {}
   const exact = /^\[([a-zA-Z-]+)="([^"]*)"\]$/.exec(selector)
-  if (exact !== null) return element.attributes[exact[1]] === exact[2]
+  if (exact !== null) return attributes[exact[1]] === exact[2]
   const contains = /^\[([a-zA-Z-]+)\*="([^"]*)"\]$/.exec(selector)
-  if (contains !== null) return (element.attributes[contains[1]] ?? '').includes(contains[2])
+  if (contains !== null) return (attributes[contains[1]] ?? '').includes(contains[2])
   const present = /^\[([a-zA-Z-]+)\]$/.exec(selector)
-  if (present !== null) return element.attributes[present[1]] !== undefined
+  if (present !== null) return attributes[present[1]] !== undefined
   return false
 }
 
 function walk(element, visit) {
   visit(element)
-  for (const child of element.children) walk(child, visit)
+  for (const child of element.children ?? []) walk(child, visit)
 }
 
 function query_selector(root, selector) {
@@ -83,6 +126,15 @@ function query_selector(root, selector) {
   // The real DOM contract is `null`, not `undefined`, and the client half
   // relies on it (`!== null` for the idempotency guard).
   return found ?? null
+}
+
+function query_selector_all(root, selector) {
+  const parts = selector.split(',').map((part) => part.trim())
+  const found = []
+  walk(root, (element) => {
+    if (parts.some((part) => matches_selector(element, part))) found.push(element)
+  })
+  return found
 }
 
 // ------------------------------------------------------- fake hook runtime
@@ -211,6 +263,7 @@ async function load_client(options = {}) {
   const document_stub = {
     body,
     querySelector: (selector) => query_selector(body, selector),
+    querySelectorAll: (selector) => query_selector_all(body, selector),
     createElement: (tag) => make_element(tag),
   }
 
@@ -397,7 +450,9 @@ test('the foot card is seated directly above the Settings row', async () => {
     assert.equal(app.foot_area.children[2], app.settings_area)
     // Two observers now share this range: the placement one and the collapse
     // one, so find them by what they watch rather than by construction order.
-    const placement = app.observers.find((entry) => entry.config?.childList === true)
+    const placement = app.observers.find(
+      (entry) => entry.config?.childList === true && entry.config?.subtree === true,
+    )
     assert.deepEqual(placement.config, { childList: true, subtree: true })
   } finally {
     await app.restore()
@@ -491,6 +546,52 @@ test('the collapsed rail shows today and nothing else', async () => {
     const masked_rail = draw()
     assert.deepEqual(text_of(masked_rail), ['$*.**'])
     assert.equal(masked_rail.props.title, 'Today $*.** - balance $*.**')
+  } finally {
+    await app.restore()
+  }
+})
+
+test('the settings nav gear is repainted as a coin stack', async () => {
+  const app = await load_client()
+  try {
+    app.exports.apply(make_plugin_context())
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // The nav belongs to the shell; it appears only once Settings is opened,
+    // which portals a child onto the body.
+    const watcher = app.observers.find(
+      (entry) => entry.config?.childList === true && entry.config?.subtree !== true,
+    )
+    assert.ok(watcher, 'the coin should watch the body for the settings modal')
+    assert.equal(watcher.target, app.body)
+
+    const other = make_nav_cell('Models')
+    const odd = make_nav_cell('Accountant', 3)
+    const ours = make_nav_cell('Accountant')
+    app.body.append(other.button)
+    app.body.append(odd.button)
+    app.body.append(ours.button)
+    watcher.callback()
+
+    // Ours is repainted, keeping the two-path shape it was checked against...
+    assert.equal(ours.svg.hasAttribute('data-harness-accountant-coin'), true)
+    assert.equal(ours.svg.children.length, 2)
+    assert.notEqual(ours.svg.children[0].attributes.d, 'gear-path-0')
+    assert.notEqual(ours.svg.children[1].attributes.d, 'gear-path-1')
+    assert.equal(ours.svg.children[0].attributes.stroke, 'currentColor')
+
+    // ...another section keeps its own icon...
+    assert.equal(other.svg.hasAttribute('data-harness-accountant-coin'), false)
+    assert.equal(other.svg.children[0].attributes.d, 'gear-path-0')
+
+    // ...and so does artwork that is not the shape this was written against.
+    assert.equal(odd.svg.hasAttribute('data-harness-accountant-coin'), false)
+    assert.equal(odd.svg.children[0].attributes.d, 'gear-path-0')
+
+    // Repainting is idempotent, so a later mutation cannot undo it.
+    const painted = ours.svg.children[0].attributes.d
+    watcher.callback()
+    assert.equal(ours.svg.children[0].attributes.d, painted)
   } finally {
     await app.restore()
   }

@@ -9,12 +9,14 @@ Two surfaces, nothing else:
    the sidebar and the 56px rail has no room for two labelled rows, so the card
    shows today's spend alone and moves the balance into its tooltip.
 2. **A detailed panel in the Settings modal** - the same balance, with 1 day /
-   7 days / 1 month breakdowns, totals, and a per-day spend bar list.
+   7 days / 1 month breakdowns, totals, and a per-day spend bar list. Its row in
+   the settings nav carries a coin stack instead of the gear the shell draws for
+   every section it does not know.
 
 ## What it does not do
 
 No coding-plan quotas, no per-provider adapters, no voucher art, no session
-switching, no i18n dictionaries, no build step. Roughly 2,000 lines covering the
+switching, no i18n dictionaries, no build step. Roughly 2,100 lines covering the
 host half and the browser half, and four runtime files.
 
 ## How it works
@@ -134,8 +136,8 @@ state the loop is in.
 node --test test/
 ```
 
-72 tests: 22 for the ledger, 16 for the probe, 26 for the host routes and the
-request fence, 8 for the client. The host tests mount the real plugin against a fake
+73 tests: 22 for the ledger, 16 for the probe, 26 for the host routes and the
+request fence, 9 for the client. The host tests mount the real plugin against a fake
 context, a stubbed `fetch`, and a throwaway `DSH_HOME`.
 
 ## Security
