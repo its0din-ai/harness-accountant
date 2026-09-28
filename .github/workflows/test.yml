@@ -49,4 +49,14 @@ jobs:
           @deepseek-ai/dsh-credentials@0.1.7-rc.2
 
       - name: Run the suite
-        run: node --test test/
+        # Do NOT pass the directory (`node --test test/`). Node 24.x dropped
+        # directory search for an explicit `--test` argument: it treats the path
+        # as a single test file, tries to load the directory as a module, and
+        # fails with
+        #   Error: Cannot find module '.../harness-accountant/test'
+        # passing one test and failing the job. Node 20 still searches, and Node
+        # 26 restored the behaviour (nodejs/node#64637), so the failure appears
+        # on exactly one leg of the matrix - which is how it survived review.
+        # Expanding the glob in the shell hands the runner four real file paths,
+        # which every supported version accepts.
+        run: node --test test/*.test.js

@@ -289,7 +289,7 @@ A ledger this build cannot read is never overwritten. It is moved aside to
 ## Development
 
 ```sh
-node --test test/
+node --test test/*.test.js
 ```
 
 A clean checkout cannot run that as-is. `test/host.test.js` imports `lib/index.js`,
@@ -303,11 +303,20 @@ npm install --no-save --no-package-lock \
   @deepseek-ai/schemastery@3.18.4 \
   @deepseek-ai/dsh-credentials@0.1.7-rc.2
 
-node --test test/
+node --test test/*.test.js
 ```
 
 CI does exactly this on every push and every pull request, on Node 20 and Node 24
 (`.github/workflows/test.yml`).
+
+The suite is run as `node --test test/*.test.js` rather than `node --test test/`.
+Node 24.x no longer searches a directory handed to `--test`: it takes the path as a
+single test file, tries to load the directory as a module, and fails with
+`Cannot find module '.../test'` while reporting one passing and one failing test.
+Node 20 still searches and Node 26 restored the search
+([nodejs/node#64637](https://github.com/nodejs/node/pull/64637)), so the breakage
+shows up on one matrix leg only. Expanding the glob in the shell passes the runner
+real file paths, which every supported version accepts.
 
 87 tests: 22 for the ledger, 18 for the probe, 29 for the host routes and the
 request fence, 17 for the client. The host tests mount the real plugin against a fake

@@ -352,7 +352,7 @@ git clone https://github.com/its0din-ai/harness-accountant
 cd harness-accountant
 
 # 1. the suite, including the fence, the 0600 ledger, and the no-secret assertions
-node --test test/
+node --test test/*.test.js
 
 # 2. no dangerous sinks, no dynamic require, no logging in the plugin
 grep -rnE "eval\(|new Function|child_process|innerHTML|dangerouslySetInnerHTML|document\.write" lib/
