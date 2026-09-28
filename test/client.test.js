@@ -862,7 +862,24 @@ test('the rail dot is yellow in peak and green off it', async () => {
   }
 })
 
-test('the rail dot blinks once and honours reduced motion', async () => {
+test('the card dot breathes while its label holds still', async () => {
+  const app = await load_client()
+  try {
+    const root = await mount_at(app, PEAK_INSTANT)
+    const tree = app.render(root.element.type)
+    const breathers = find_all(tree, (node) => typeof node.props?.ref === 'function')
+    assert.equal(breathers.length, 1)
+    assert.equal(breathers[0].props.style.background, '#f0c000')
+    // The circle is a sibling of the words, never their parent, so the label
+    // cannot inherit the opacity animation. That is the whole point of the fix.
+    assert.deepEqual(text_of(breathers[0]), [])
+    assert.ok(text_of(tree).includes('Peak hours'))
+  } finally {
+    await app.restore()
+  }
+})
+
+test('the tier circle breathes slowly, once, and honours reduced motion', async () => {
   const app = await load_client()
   try {
     const root = await mount_at(app, PEAK_INSTANT)
@@ -871,7 +888,13 @@ test('the rail dot blinks once and honours reduced motion', async () => {
     const dot = peak_rows(app.render(root.element.type))[0]
 
     const frames = []
-    const node = { animate: (key, options) => frames.push({ key, options }) }
+    const cancelled = []
+    const node = {
+      animate: (key, options) => {
+        frames.push({ key, options })
+        return { cancel: () => cancelled.push('cancelled') }
+      },
+    }
     // The stub never invokes refs, so the test drives it - twice, because React
     // hands a fresh node on every render and the animation must not restart.
     dot.props.ref(node)
@@ -879,7 +902,15 @@ test('the rail dot blinks once and honours reduced motion', async () => {
     assert.equal(frames.length, 1)
     assert.deepEqual(frames[0].key, [{ opacity: 1 }, { opacity: 0.25 }, { opacity: 1 }])
     assert.equal(frames[0].options.iterations, Infinity)
-    assert.equal(frames[0].options.duration, 1400)
+    // Slow enough to sit in the corner of the eye rather than pull at it.
+    assert.equal(frames[0].options.duration, 3000)
+
+    // Collapsing and expanding swaps the rail for the card. The animation that
+    // belonged to the unmounted node is cancelled rather than left running on a
+    // detached element.
+    assert.deepEqual(cancelled, [])
+    dot.props.ref({ animate: () => ({ cancel: () => cancelled.push('cancelled') }) })
+    assert.deepEqual(cancelled, ['cancelled'])
   } finally {
     await app.restore()
   }

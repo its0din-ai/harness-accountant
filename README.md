@@ -7,8 +7,8 @@ Two surfaces, nothing else:
 1. **A card in the sidebar**, seated directly above the Settings row - the current
    billing tier (peak or off-peak, named and coloured), the balance with an eye
    toggle that masks it, and today's spend. Collapse the sidebar and the 56px rail
-   has no room for labelled rows, so it keeps the tier as a blinking coloured circle
-   above today's spend, and moves the balance into its tooltip.
+   has no room for labelled rows, so it keeps the tier as a slowly breathing
+   coloured circle above today's spend, and moves the balance into its tooltip.
 2. **A detailed panel in the Settings modal** - the same balance, with 1 day /
    7 days / 1 month breakdowns, totals, and a per-day spend bar list. Its row in
    the settings nav carries a coin stack instead of the gear the shell draws for
@@ -60,6 +60,11 @@ recomputed from `Date.now()` rather than advanced by the timer, so a throttled,
 coalesced or sleep-delayed wakeup can only delay the correction, never leave the
 reading stale. A `visibilitychange` refresh covers the tab that slept through the
 boundary altogether.
+
+Only the tier's coloured circle moves - never the words beside it - and it moves
+slowly: one composited opacity cycle lasting three seconds, which reads as a status
+light rather than an alarm. It is dropped entirely under `prefers-reduced-motion`,
+where the circle simply stays lit.
 
 Since the schedule is in UTC and the comparison is done in UTC, the indicator is
 correct in **any** timezone - the reader's own clock never enters the decision. Only
@@ -187,7 +192,7 @@ state the loop is in.
 node --test test/
 ```
 
-86 tests: 22 for the ledger, 18 for the probe, 29 for the host routes and the
+87 tests: 22 for the ledger, 18 for the probe, 29 for the host routes and the
 request fence, 17 for the client. The host tests mount the real plugin against a fake
 context, a stubbed `fetch`, and a throwaway `DSH_HOME`; the client tests drive a
 stub DOM and a pinned clock, because the peak tier is a function of the wall clock.
