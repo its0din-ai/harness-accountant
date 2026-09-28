@@ -99,18 +99,22 @@ On `response.ok !== true`, the probe returns `http ${status}` and **never reads
 the body**. Error pages and proxy notices routinely echo the request line and
 headers that were just rejected.
 
-### T-09 - Hostile server streaming an unbounded body - **PARTIAL**
-`await response.json()` buffers the whole body. Only the 15 s
-`AbortSignal.timeout` bounds this; there is no byte cap.
+### T-09 - Hostile server streaming an unbounded body - **MITIGATED**
+The body is read as a stream and counted chunk by chunk (`read_body_capped`,
+`lib/probe.js`). A declared `content-length` over the ceiling is a cheap early
+exit, but the streaming count is what actually enforces it: a body that
+declares an honest length and one that lies about it stop at the same point. A
+response with no readable stream is refused rather than falling back to an
+unbounded read - the fallback would be the vulnerability.
 
-*Why not mitigated.* A size cap needs a streaming reader and a byte counter,
-which is real complexity for a check against the one endpoint the operator
-configured over TLS.
+Ceiling: `max_response_bytes`, default 65536, schema-bounded to
+`[1024, 1048576]`. A balance payload is a few hundred bytes.
 
-*Tradeoff.* A compromised `api.deepseek.com` (or a hostile value in
-`api_base_url` set by whoever can edit the profile config) can exhaust memory in
-the host process. The attacker who can set `api_base_url` can already run code
-in the host. Accepted.
+*Residual.* A body under the ceiling is still buffered in full, so the ceiling
+is the guarantee rather than the absence of buffering. The read is also bounded
+only by the 15 s `AbortSignal.timeout`: a server trickling one byte per second
+can hold the probe open for the full 15 s while staying comfortably under the
+cap. That is a liveness cost, not a memory one.
 
 ### T-10 - Redirect to a non-https scheme - **MITIGATED** (by T-06)
 Redirects abort, so a downgrade cannot happen.
@@ -362,4 +366,5 @@ key-derived into a string that reaches a log, a route payload, or the DOM.
 | --- | --- |
 | 2026-09-28 | Initial model: 35 threats - 25 mitigated, 2 partial (T-09, T-35), 5 accepted (T-16, T-17, T-22, T-25, T-31), 2 out of scope (T-33, T-34), 1 explicit non-control (T-24) |
 | 2026-09-28 | E-013: recorded that in the maintainer's profile every registered route additionally sits behind `dsh-web-startup-auth`'s session gate. The fence is therefore defence in depth rather than the first gate - and the model explicitly does **not** count the third-party session as a control, because another package can be uninstalled. Section C gained a preamble; T-16 and T-17 reworded to match. |
+| 2026-09-28 | B-03 (E-017): **T-09 moved from partial to mitigated.** The probe counts the body as it streams and refuses past `max_response_bytes` (default 65536, schema-bounded to `[1024, 1048576]`); a declared `content-length` over the ceiling short-circuits before the body is touched, and a response with no readable stream is refused rather than read unbounded. Totals become 26 mitigated, 1 partial (T-35), 5 accepted, 2 out of scope, 1 non-control. |
 | 2026-09-28 | E-016 (B-01): day keys now come from a configured fixed UTC offset instead of the host's local zone, so the timezone half of **T-22** is closed and the remainder is narrowed to a manual clock jump. T-22 reworded; its residual (an offset change re-buckets future samples only, and the file does not record the offset) is named rather than implied. |

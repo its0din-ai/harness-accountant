@@ -99,6 +99,7 @@ The schema lives in `lib/index.js` and the defaults are written out in
 | `accounting_utc_offset_minutes` | `480` | the day boundary, as a fixed offset from UTC. `480` is UTC+08:00, DeepSeek's billing day. Set `0` for UTC or your own offset for a local day. It is an offset, not a timezone: it does not model daylight saving |
 | `api_key_env` | `DEEPSEEK_API_KEY` | a credential *reference*, resolved per probe |
 | `api_base_url` | `https://api.deepseek.com` | must be a bare `https:` origin; plain `http:` is refused |
+| `max_response_bytes` | `65536` | ceiling on the bytes the probe will buffer from a response body, schema-bounded to `[1024, 1048576]`. A balance payload is a few hundred bytes, so this is pure headroom; it exists so a hostile or broken origin cannot allocate without bound |
 
 The API key comes from `ctx.credentials` (i.e. `~/.dsh/.credentials.yaml` or the
 launch environment). It is resolved fresh for every probe and never cached.

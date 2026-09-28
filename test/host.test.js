@@ -111,17 +111,26 @@ async function mount(t, options = {}) {
     calls.push({ url, init })
     if (options.fetch_throws === true) throw new Error(`connect ECONNREFUSED ${url}`)
     if (options.fetch_status !== undefined) {
-      return { ok: false, status: options.fetch_status, json: async () => ({}) }
+      // No body at all: a non-ok response is never read, and this stub proves it.
+      return { ok: false, status: options.fetch_status }
     }
+    const text = JSON.stringify(options.payload ?? {
+      is_available: true,
+      balance_infos: [
+        { currency: 'USD', total_balance: '4.58', granted_balance: '0.00', topped_up_balance: '4.58' },
+      ],
+    })
+    const bytes = new TextEncoder().encode(text)
     return {
       ok: true,
       status: 200,
-      json: async () => options.payload ?? {
-        is_available: true,
-        balance_infos: [
-          { currency: 'USD', total_balance: '4.58', granted_balance: '0.00', topped_up_balance: '4.58' },
-        ],
-      },
+      headers: { get: () => null },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(bytes)
+          controller.close()
+        },
+      }),
     }
   }
 

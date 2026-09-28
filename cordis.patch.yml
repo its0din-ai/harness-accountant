@@ -24,3 +24,7 @@
         # Credential reference resolved through ctx.credentials.
         api_key_env: DEEPSEEK_API_KEY
         api_base_url: https://api.deepseek.com
+        # Ceiling on the response bytes the probe will buffer. A balance payload
+        # is a few hundred bytes; this only stops a hostile origin allocating
+        # without bound. Bounded by the schema to [1024, 1048576].
+        max_response_bytes: 65536

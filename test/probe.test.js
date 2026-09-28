@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   DEFAULT_API_BASE_URL,
+  DEFAULT_MAX_RESPONSE_BYTES,
   normalize_base_url,
   parse_balance_payload,
   probe_balance,
@@ -12,11 +13,50 @@ import {
 
 const SAMPLE_KEY = 'sk-0123456789abcdef0123456789abcdef'
 
-function json_response(body, status = 200) {
+const ENCODER = new TextEncoder()
+
+function content_length_header(name, declared) {
+  if (String(name).toLowerCase() !== 'content-length' || declared === undefined) return null
+  return String(declared)
+}
+
+/**
+ * A stand-in for a fetch `Response` that carries a real readable body, so the
+ * code under test takes the same streaming path in tests as in production.
+ */
+function json_response(body, status = 200, options = {}) {
+  const bytes = ENCODER.encode(JSON.stringify(body))
   return {
     ok: status >= 200 && status < 300,
     status,
-    json: async () => body,
+    headers: { get: (name) => content_length_header(name, options.content_length) },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes)
+        controller.close()
+      },
+    }),
+  }
+}
+
+/** A response that streams `total_bytes` of filler in `chunk_bytes` pieces. */
+function streaming_response(total_bytes, chunk_bytes = 8192, declared) {
+  let sent = 0
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: (name) => content_length_header(name, declared) },
+    body: new ReadableStream({
+      pull(controller) {
+        if (sent >= total_bytes) {
+          controller.close()
+          return
+        }
+        const size = Math.min(chunk_bytes, total_bytes - sent)
+        sent += size
+        controller.enqueue(new Uint8Array(size).fill(0x20))
+      },
+    }),
   }
 }
 
@@ -153,6 +193,84 @@ test('probe_balance never leaks the key through a failure reason', async () => {
     },
   })
   assert.ok(!not_error.reason.includes(SAMPLE_KEY), 'a non-Error throw is not read for a message')
+})
+
+test('probe_balance refuses a body that streams past the cap', async () => {
+  const result = await probe_balance({
+    api_base_url: DEFAULT_API_BASE_URL,
+    api_key: SAMPLE_KEY,
+    max_response_bytes: 4096,
+    fetch_impl: async () => streaming_response(200_000),
+  })
+  assert.equal(result.status, 'failed')
+  assert.equal(result.reason, 'response body exceeds 4096 bytes')
+})
+
+test('probe_balance refuses on a declared length alone, without reading the body', async () => {
+  let body_reads = 0
+  const result = await probe_balance({
+    api_base_url: DEFAULT_API_BASE_URL,
+    api_key: SAMPLE_KEY,
+    max_response_bytes: 4096,
+    fetch_impl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name) => content_length_header(name, 10_000_000) },
+      get body() {
+        body_reads += 1
+        return undefined
+      },
+    }),
+  })
+  assert.equal(result.status, 'failed')
+  assert.equal(result.reason, 'response body exceeds 4096 bytes')
+  assert.equal(body_reads, 0, 'the body is not touched once the declared length is over the cap')
+})
+
+test('probe_balance accepts a body that exactly fits the cap and refuses one byte more', async () => {
+  const payload = { is_available: true, balance_infos: [{ currency: 'USD', total_balance: '4.58' }] }
+  const size = ENCODER.encode(JSON.stringify(payload)).byteLength
+
+  const fits = await probe_balance({
+    api_base_url: DEFAULT_API_BASE_URL,
+    api_key: SAMPLE_KEY,
+    max_response_bytes: size,
+    fetch_impl: async () => json_response(payload, 200, { content_length: size }),
+  })
+  assert.equal(fits.status, 'ready')
+  assert.equal(fits.balance_units, 4_580_000)
+
+  const one_over = await probe_balance({
+    api_base_url: DEFAULT_API_BASE_URL,
+    api_key: SAMPLE_KEY,
+    max_response_bytes: size - 1,
+    fetch_impl: async () => streaming_response(size, 8),
+  })
+  assert.equal(one_over.status, 'failed')
+  assert.equal(one_over.reason, `response body exceeds ${size - 1} bytes`)
+})
+
+test('probe_balance falls back to the documented cap for a malformed limit', async () => {
+  for (const bad of ['4096', 0, -1, Number.NaN, Number.POSITIVE_INFINITY, null, {}]) {
+    const result = await probe_balance({
+      api_base_url: DEFAULT_API_BASE_URL,
+      api_key: SAMPLE_KEY,
+      max_response_bytes: bad,
+      fetch_impl: async () => streaming_response(DEFAULT_MAX_RESPONSE_BYTES + 1),
+    })
+    assert.equal(result.status, 'failed', `expected the default cap for ${String(bad)}`)
+    assert.equal(result.reason, `response body exceeds ${DEFAULT_MAX_RESPONSE_BYTES} bytes`)
+  }
+})
+
+test('probe_balance refuses a response with no readable body', async () => {
+  const result = await probe_balance({
+    api_base_url: DEFAULT_API_BASE_URL,
+    api_key: SAMPLE_KEY,
+    fetch_impl: async () => ({ ok: true, status: 200 }),
+  })
+  assert.equal(result.status, 'failed')
+  assert.equal(result.reason, 'response body is not readable')
 })
 
 test('resolve_api_key reports a clear reason without a credential store', async () => {
