@@ -88,25 +88,104 @@ guesses.
 
 Hosted at
 [github.com/its0din-ai/harness-accountant](https://github.com/its0din-ai/harness-accountant).
+The package is deliberately **not** published to npm: the supported channel is a git
+install, which is what the commands below use.
+
+### What you need first
+
+- A DSH profile that boots the **Web GUI** (`dsh web`). This plugin ships no window of
+  its own - it seats a card in the sidebar and a section in the Settings modal - so it
+  needs the shell that has those.
+- **Node 20 or newer**, which is what `engines.node` declares and what CI runs.
+- A **DeepSeek API key**. The balance endpoint is authenticated, and the key is the
+  only thing you have to supply yourself; see *Give it your API key* below.
+- The `dsh` CLI, because `dsh plugin` is what installs the row.
+
+### Install the row
 
 ```sh
-# 1. back up the profile wiring first - this is the rollback
+# 1. back up the profile wiring first - this is also the rollback
 cp ~/.dsh/profiles/web/package.json      ~/.dsh/profiles/web/package.json.bak
 cp ~/.dsh/profiles/web/cordis.patch.yml  ~/.dsh/profiles/web/cordis.patch.yml.bak
 
-# 2. install from GitHub
+# 2. add the package to the web profile
 dsh plugin --profile web add \
   git+https://github.com/its0din-ai/harness-accountant.git
+
+# 3. restart the web app: stop the running `dsh web`, then start it again
 ```
 
 Then reload the GUI at http://127.0.0.1:3080.
+
+**The restart is required for an install**, because the plugin's row is composed into
+the profile at boot and a running process does not see a row added underneath it. It is
+*not* required after a settings change: saving the settings page re-reads the new
+values into the live fiber.
 
 To pin a revision, append a tag or commit to the URL:
 
 ```sh
 dsh plugin --profile web add \
-  git+https://github.com/its0din-ai/harness-accountant.git#v0.1.0
+  git+https://github.com/its0din-ai/harness-accountant.git#v1.0.0
 ```
+
+### Give it your API key
+
+The plugin never asks you for a key and never stores one. On every probe it asks the
+platform's credential seam for the **name** `DEEPSEEK_API_KEY`, and the seam resolves
+that name in this order:
+
+1. the **environment** of the process running `dsh web`,
+2. the **store** at `~/.dsh/.credentials.yaml`,
+3. a **`.env`** file.
+
+So either export it before you start the web app:
+
+```sh
+export DEEPSEEK_API_KEY=sk-...
+dsh web
+```
+
+or write it into the store, which survives restarts:
+
+```yaml
+# ~/.dsh/.credentials.yaml - keep this file at mode 0600
+version: 1
+refs:
+  DEEPSEEK_API_KEY: sk-...
+```
+
+**Do not put the key in `cordis.patch.yml`.** That file takes the *name*
+(`api_key_env: DEEPSEEK_API_KEY`), never the value. The value stays in the credential
+store so the configuration can be copied, shared, or rendered in a settings UI without
+leaking it. An empty value counts as absent, so a blank `DEEPSEEK_API_KEY` behaves
+exactly like no key at all rather than failing quietly at the API.
+
+### Check that it worked
+
+Within about a minute of the restart - one poll interval - you should see:
+
+- a card in the sidebar, directly above the **Settings** row, showing the tier, the
+  balance and today's spend. The first reading *is* the opening balance, so today's
+  spend stays `0.00` until a second reading arrives;
+- an **Accountant** row in the Settings modal, with 1 day / 7 days / 1 month tabs.
+
+`~/.dsh/harness-accountant/ledger.json` is created by the first successful probe, at
+mode `0600` inside a `0700` directory. If it is not there, the probe is not succeeding;
+see Troubleshooting.
+
+### Roll back
+
+The two `.bak` files taken in step 1 are the whole rollback:
+
+```sh
+cp ~/.dsh/profiles/web/package.json.bak      ~/.dsh/profiles/web/package.json
+cp ~/.dsh/profiles/web/cordis.patch.yml.bak  ~/.dsh/profiles/web/cordis.patch.yml
+# then restart the web app
+```
+
+That does not remove the ledger under `~/.dsh/harness-accountant/`, which can be
+deleted on its own; it holds nothing but daily balances and today's readings.
 
 ### The resolution requirement
 
@@ -186,11 +265,49 @@ are constants in `lib/index.js`. The current streak and the pending wait are bot
 `/overview` payload (`consecutive_failures`, `next_probe_in_sec`) if you want to see the
 state the loop is in.
 
+## Troubleshooting
+
+Everything the plugin knows about its own health is in the `/overview` payload, and
+the card shows the short form of the same `error` string. The usual failures:
+
+| what you see | what it means |
+| --- | --- |
+| `credentials service unavailable` | the credential seam is not mounted in this profile. A custom composition that drops the credentials service has to add it back |
+| `no credential stored for DEEPSEEK_API_KEY` | the name resolved to nothing: not exported, not in `~/.dsh/.credentials.yaml`, not in a `.env` the process can see - or present but empty |
+| `request failed: ...` | the API was not reached. The text is redacted on the way out, so a key-shaped run appears as `sk-***` |
+| `http 401` or `http 403` | the API was reached and refused the key |
+| `account reports no CNY wallet` | you pinned `currency: CNY` and the account no longer reports one. Nothing is substituted, deliberately - a currency change discards the day series. Clear the pin or set the one you actually use |
+| nothing appears in the sidebar | the browser half is served but not seated. Check the browser console, and confirm the tab was reloaded *after* the restart |
+| the Settings row shows a gear, not the coin | the shell renamed its row label or its css-module class. The coin is painted onto the gear the shell already drew, matched by the label `Accountant` and a `navIcon` class suffix, so a rename leaves the default in place |
+| the tier reads off-peak all weekend | correct - weekends are off-peak in full |
+| the tier reads peak on a Chinese public holiday | also correct for this plugin: no holiday calendar is carried, and the tooltip says so |
+| the 7-day and 30-day figures look thin | the ledger is built forward from the first probe and nothing backfills it, because DeepSeek exposes no balance history. Those windows need days of uptime before they mean anything |
+
+A ledger this build cannot read is never overwritten. It is moved aside to
+`ledger.json.incompatible` and `/overview` carries the reason in `ledger_notice`.
+
 ## Development
 
 ```sh
 node --test test/
 ```
+
+A clean checkout cannot run that as-is. `test/host.test.js` imports `lib/index.js`,
+which imports `@deepseek-ai/schemastery`, and `lib/probe.js`, which imports
+`@deepseek-ai/dsh-credentials`. Both are declared as **optional** peers, so nothing
+installs them and the first import fails. Install the two pinned versions the host
+runs, then run the suite:
+
+```sh
+npm install --no-save --no-package-lock \
+  @deepseek-ai/schemastery@3.18.4 \
+  @deepseek-ai/dsh-credentials@0.1.7-rc.2
+
+node --test test/
+```
+
+CI does exactly this on every push and every pull request, on Node 20 and Node 24
+(`.github/workflows/test.yml`).
 
 87 tests: 22 for the ledger, 18 for the probe, 29 for the host routes and the
 request fence, 17 for the client. The host tests mount the real plugin against a fake
@@ -214,3 +331,8 @@ block, so the card is a plain `div` with its own React root seated by DOM
 surgery, re-seated by a `MutationObserver`, and switched between its full and
 rail forms by a second one watching the shell's collapsed marker. No code was
 copied; the balance and ledger logic here is independent.
+
+## Licence
+
+MIT. `THREAT.md` ships inside the package on purpose: it is the security posture you
+are installing, not an internal note.

@@ -5,6 +5,9 @@
   "description": "DeepSeek balance and spend accounting for the DSH Web GUI: a sidebar card showing today's spend, the account's currency, and whether the current hour is billed at the peak or off-peak rate, plus a Settings breakdown for 1 day / 7 days / 1 month.",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/its0din-ai/harness-accountant.git"

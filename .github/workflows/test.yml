@@ -1,0 +1,52 @@
+# Run the suite on every push and every pull request.
+#
+# The repository has no `dependencies`, and that is deliberate: the plugin ships
+# zero runtime packages. Two platform modules are needed anyway, because they
+# are imported at module load:
+#
+#   lib/index.js  ->  @deepseek-ai/schemastery
+#   lib/probe.js  ->  @deepseek-ai/dsh-credentials
+#
+# Both are declared as *optional* peer dependencies, so nothing installs them on
+# its own and a bare checkout cannot import `lib/index.js`. The job installs the
+# two pinned versions the running host uses, then runs the suite.
+#
+# The credentials package is pinned to an exact version on purpose: it publishes
+# what this plugin needs under the `next` dist-tag while `latest` still points at
+# an older line, so an unpinned install would silently test against the wrong
+# module.
+
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor this package declares in `engines.node`, and the LTS line.
+        node: ['20', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install the platform peers
+        run: >-
+          npm install --no-save --no-package-lock
+          @deepseek-ai/schemastery@3.18.4
+          @deepseek-ai/dsh-credentials@0.1.7-rc.2
+
+      - name: Run the suite
+        run: node --test test/
