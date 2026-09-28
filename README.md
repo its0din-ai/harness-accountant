@@ -101,6 +101,7 @@ The schema lives in `lib/index.js` and the defaults are written out in
 | `poll_interval_sec` | `60` | the healthy cadence, clamped to `>= 30` regardless of what is configured. Consecutive failures stretch it: see below |
 | `retain_days` | `400` | clamped to `[7, 730]` |
 | `accounting_utc_offset_minutes` | `480` | the day boundary, as a fixed offset from UTC. `480` is UTC+08:00, DeepSeek's billing day. Set `0` for UTC or your own offset for a local day. It is an offset, not a timezone: it does not model daylight saving |
+| `currency` | `auto` | which wallet to follow. `auto` takes the first usable one in the order the balance response lists the wallets - right for an account that reports a single currency. Set `CNY` or `USD` to pin it; read case-insensitively, and anything else means `auto` |
 | `api_key_env` | `DEEPSEEK_API_KEY` | a credential *reference*, resolved per probe |
 | `api_base_url` | `https://api.deepseek.com` | must be a bare `https:` origin; plain `http:` is refused |
 | `max_response_bytes` | `65536` | ceiling on the bytes the probe will buffer from a response body, schema-bounded to `[1024, 1048576]`. A balance payload is a few hundred bytes, so this is pure headroom; it exists so a hostile or broken origin cannot allocate without bound |
@@ -120,6 +121,20 @@ at an older version is upgraded in place on load, and `/overview` reports that a
 does not validate - is never guessed at and never overwritten: it is moved aside to
 `ledger.json.incompatible` in the same 0700 directory with the same 0600 mode, the
 plugin starts a fresh ledger, and the reason arrives in `ledger_notice`.
+
+A ledger tracks **one currency at a time**, and the two it knows are never mixed: `CNY`
+and `USD` micro-units are not comparable, so a change of currency discards the day
+series rather than summing across them. Which one that is comes from the balance
+response. Under the default `auto` the plugin takes the first usable wallet **in the
+order the response lists them** - there is no built-in preference for either, because
+an account that reports both is exactly where a guess would decide what gets recorded.
+An account that reports a single currency always follows it, CNY included. Set
+`currency` to `CNY` or `USD` to pin the choice instead; a pin the account stops
+reporting fails the probe by name (`account reports no CNY wallet`) rather than quietly
+following the other wallet, because that substitution is precisely what would throw the
+history away. The plugin holds no exchange rate and never converts: a `4.58` balance is
+rendered with the sign of whichever currency the response reported, and the number itself
+is passed through untouched.
 
 A failing probe does not retry forever at the same rate. The first three consecutive
 failures keep the configured cadence, because a service that blinks once should be

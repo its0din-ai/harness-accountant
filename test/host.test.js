@@ -291,6 +291,53 @@ test('the refresh route probes and persists a 0600 ledger', async (t) => {
   await app.dispose()
 })
 
+test('a CNY account is accounted in CNY, with no conversion', async (t) => {
+  // The operator's test (m02636): intercept the response and rewrite the
+  // currency string, leaving the number exactly as it was. A CNY account's own
+  // figures must come through whole - the plugin has no exchange rate and must
+  // never invent one - and nothing in the path may fall back to USD.
+  const app = await mount(t, {
+    payload: {
+      is_available: true,
+      balance_infos: [
+        { currency: 'CNY', total_balance: '4.58', granted_balance: '0.00', topped_up_balance: '4.58' },
+      ],
+    },
+  })
+  const response = await app.call(`${API_PREFIX}/refresh`, make_request({ method: 'POST' }))
+  const body = body_of(response)
+
+  assert.equal(response.captured.status, 200)
+  assert.equal(body.currency, 'CNY')
+  assert.equal(body.balance.units, 4_580_000, 'the amount is not converted')
+  assert.equal(body.balance.text, '\u00a54.58')
+  assert.equal(body.balance.wallets[0].currency, 'CNY')
+  assert.equal(body.balance.wallets[0].text, '\u00a54.58')
+  assert.equal(body.ranges.day.spend_text, '\u00a50.00')
+
+  const ledger = JSON.parse(await readFile(app.ledger_path, 'utf8'))
+  assert.equal(ledger.currency, 'CNY')
+  const dates = Object.keys(ledger.days)
+  assert.equal(dates.length, 1)
+  assert.equal(ledger.days[dates[0]].closing_units, 4_580_000)
+  await app.dispose()
+})
+
+test('a pinned currency the account does not report fails by name', async (t) => {
+  // The stub reports USD only. Pinning CNY must not silently substitute the
+  // other wallet: a substituted currency changes what the ledger tracks, and a
+  // currency change throws the day series away.
+  const app = await mount(t, { config: { currency: 'CNY' } })
+  const response = await app.call(`${API_PREFIX}/overview`)
+  const body = body_of(response)
+
+  assert.equal(response.captured.status, 200)
+  assert.match(body.error, /reports no CNY wallet/)
+  assert.equal(body.currency, 'CNY', 'a pin seeds the ledger, so even the error state is in CNY')
+  assert.equal(body.balance, undefined)
+  await app.dispose()
+})
+
 test('a stored ledger is read back after a restart', async (t) => {
   const first = await mount(t, { keep_home: true })
   await first.call(`${API_PREFIX}/refresh`, make_request({ method: 'POST' }))

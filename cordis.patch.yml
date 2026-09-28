@@ -21,6 +21,13 @@
         # model daylight saving. Set 0 for UTC, or your own offset for a local
         # day. Changing it re-buckets future samples only.
         accounting_utc_offset_minutes: 480
+        # Which wallet to follow. `auto` takes the first usable one in the
+        # order the balance response lists the wallets, which is the right
+        # answer for an account that reports a single currency. Set `CNY` or
+        # `USD` to pin it. A pinned currency that the account stops reporting
+        # fails the probe by name rather than quietly substituting the other
+        # one, because a currency change discards the whole day series.
+        currency: auto
         # Credential reference resolved through ctx.credentials.
         api_key_env: DEEPSEEK_API_KEY
         api_base_url: https://api.deepseek.com

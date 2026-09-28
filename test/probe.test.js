@@ -87,28 +87,71 @@ test('redact_secret removes key-shaped runs and truncates', () => {
   assert.equal(redact_secret(undefined), '')
 })
 
-test('parse_balance_payload prefers USD and keeps amounts exact', () => {
-  const parsed = parse_balance_payload({
+/** E-005's live response shape, with the parts a test cares about exposed. */
+function balance_response({ currency = 'USD', total_balance = '4.58' } = {}) {
+  return {
     is_available: true,
     balance_infos: [
-      { currency: 'CNY', total_balance: '33.10', granted_balance: '0.00', topped_up_balance: '33.10' },
-      { currency: 'USD', total_balance: '4.58', granted_balance: '0.00', topped_up_balance: '4.58' },
+      { currency, total_balance, granted_balance: '0.00', topped_up_balance: total_balance },
     ],
+  }
+}
+
+const BOTH_WALLETS = [
+  { currency: 'CNY', total_balance: '33.10', granted_balance: '0.00', topped_up_balance: '33.10' },
+  { currency: 'USD', total_balance: '4.58', granted_balance: '0.00', topped_up_balance: '4.58' },
+]
+
+test('parse_balance_payload follows the order the response lists the wallets', () => {
+  // No built-in preference: an account that reports both is exactly the case
+  // where a guess decides what the ledger tracks.
+  const cny_first = parse_balance_payload({ is_available: true, balance_infos: BOTH_WALLETS })
+  assert.equal(cny_first.status, 'ready')
+  assert.equal(cny_first.is_available, true)
+  assert.equal(cny_first.currency, 'CNY')
+  assert.equal(cny_first.balance_units, 33_100_000)
+  assert.equal(cny_first.wallets.length, 2)
+
+  const usd_first = parse_balance_payload({
+    is_available: true,
+    balance_infos: [...BOTH_WALLETS].reverse(),
   })
-  assert.equal(parsed.status, 'ready')
-  assert.equal(parsed.is_available, true)
-  assert.equal(parsed.currency, 'USD')
-  assert.equal(parsed.balance_units, 4_580_000)
-  assert.equal(parsed.wallets.length, 2)
+  assert.equal(usd_first.currency, 'USD')
+  assert.equal(usd_first.balance_units, 4_580_000)
 })
 
-test('parse_balance_payload falls back to CNY and then the first wallet', () => {
-  const cny = parse_balance_payload({ balance_infos: [{ currency: 'CNY', total_balance: '10.00' }] })
-  assert.equal(cny.currency, 'CNY')
-  assert.equal(cny.balance_units, 10_000_000)
+test('parse_balance_payload takes the pinned currency from either response order', () => {
+  for (const preferred of ['CNY', 'USD']) {
+    for (const infos of [BOTH_WALLETS, [...BOTH_WALLETS].reverse()]) {
+      const parsed = parse_balance_payload({ balance_infos: infos }, preferred)
+      assert.equal(parsed.currency, preferred, `pinning ${preferred} should win`)
+    }
+  }
+})
 
-  const other = parse_balance_payload({ balance_infos: [{ currency: 'USD', total_balance: '1.00' }] })
-  assert.equal(other.currency, 'USD')
+test('parse_balance_payload names a pinned currency the account does not report', () => {
+  const parsed = parse_balance_payload(balance_response({ currency: 'USD' }), 'CNY')
+  assert.equal(parsed.status, 'failed')
+  assert.match(parsed.reason, /reports no CNY wallet/)
+
+  // Case folding belongs to the config boundary, not here: anything that is not
+  // one of the two currencies reads as `auto` rather than as a pin.
+  const loose = parse_balance_payload(balance_response({ currency: 'USD' }), 'cny')
+  assert.equal(loose.status, 'ready')
+  assert.equal(loose.currency, 'USD')
+})
+
+test('parse_balance_payload reads a CNY payload without converting it', () => {
+  // E-005's live response with the currency string rewritten and nothing else -
+  // no rate, no rounding. A CNY account's own numbers must come through whole,
+  // because the plugin has no exchange rate and must never invent one.
+  const parsed = parse_balance_payload(balance_response({ currency: 'CNY' }))
+  assert.equal(parsed.status, 'ready')
+  assert.equal(parsed.currency, 'CNY')
+  assert.equal(parsed.balance_units, 4_580_000)
+
+  const other = parse_balance_payload(balance_response({ currency: 'USD' }), 'CNY')
+  assert.equal(other.status, 'failed')
 })
 
 test('parse_balance_payload rejects unusable payloads', () => {
