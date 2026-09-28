@@ -168,6 +168,26 @@ test('resolve_api_key reports a clear reason without a credential store', async 
   assert.equal(throwing.reason, 'no credential stored for DEEPSEEK_API_KEY')
 })
 
+test('resolve_api_key asks for the credential provider non-strictly', async () => {
+  // Regression: the provider's fiber is commonly still activating when this
+  // plugin mounts, and strict mode reports such a provider as absent — which
+  // surfaced as "credentials service unavailable" on the first probe.
+  const calls = []
+  const ready = await resolve_api_key(
+    {
+      get(name, strict) {
+        calls.push([name, strict])
+        return { resolve: async () => ({ value: SAMPLE_KEY, source: 'env' }) }
+      },
+    },
+    'DEEPSEEK_API_KEY',
+  )
+
+  assert.equal(ready.status, 'ready')
+  assert.equal(ready.api_key, SAMPLE_KEY)
+  assert.deepEqual(calls, [['credentials', false]])
+})
+
 test('resolve_api_key returns the value and redacts a hostile error message', async () => {
   const ok = await resolve_api_key(
     { get: () => ({ resolve: async () => ({ value: SAMPLE_KEY, source: 'file' }) }) },

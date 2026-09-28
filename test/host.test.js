@@ -13,7 +13,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { API_PREFIX, apply, is_same_origin_local_request } from '../lib/index.js'
+import { API_PREFIX, apply, config_value, inject, is_same_origin_local_request } from '../lib/index.js'
 
 const API_KEY = `sk-${'a'.repeat(32)}`
 const ORIGIN = '127.0.0.1:3080'
@@ -353,4 +353,36 @@ test('disabling the plugin polls nothing at all', async (t) => {
   assert.equal(app.calls.length, 0)
   assert.equal(body.balance, undefined)
   await app.dispose()
+})
+
+// ------------------------------------------------------------ configuration
+
+test('config_value reads a volatile reference instead of falling back', () => {
+  // Regression: a `.volatile()` field is delivered as a frozen `{get()}` handle
+  // (schemastery/lib/index.cjs:480), not as its value. Reading the handle
+  // directly made every field look like an empty object, so the credential
+  // reference was never a string and the very first probe could not resolve.
+  let current = 'from-reference'
+  const reference = Object.freeze({ get: () => current })
+
+  assert.equal(config_value(reference, 'fallback'), 'from-reference')
+  current = 'after-a-settings-save'
+  assert.equal(config_value(reference, 'fallback'), 'after-a-settings-save')
+
+  // Plain values are still passed through untouched, including falsy ones.
+  assert.equal(config_value('plain', 'fallback'), 'plain')
+  assert.equal(config_value(false, true), false)
+  assert.equal(config_value(0, 42), 0)
+
+  // A missing or unreadable field uses the fallback.
+  assert.equal(config_value(undefined, 'fallback'), 'fallback')
+  assert.equal(config_value({ get: () => undefined }, 'fallback'), 'fallback')
+})
+
+test('inject waits for the initialized credential provider', () => {
+  // Regression: with only `webServer` injected, activation did not wait for
+  // `dsh-credentials-local` to run `[Service.init]`, which is what populates
+  // the reference map (`dsh-credentials-local/lib/index.js:647`). The first
+  // probe therefore read an empty store and the ledger was never written.
+  assert.deepEqual(inject, ['webServer', 'credentials'])
 })
