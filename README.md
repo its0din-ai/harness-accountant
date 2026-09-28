@@ -96,11 +96,17 @@ The schema lives in `lib/index.js` and the defaults are written out in
 | `enabled` | `true` | `false` stops all background probing; routes still serve the ledger, and an explicit refresh still probes |
 | `poll_interval_sec` | `60` | clamped to `>= 30` regardless of what is configured |
 | `retain_days` | `400` | clamped to `[7, 730]` |
+| `accounting_utc_offset_minutes` | `480` | the day boundary, as a fixed offset from UTC. `480` is UTC+08:00, DeepSeek's billing day. Set `0` for UTC or your own offset for a local day. It is an offset, not a timezone: it does not model daylight saving |
 | `api_key_env` | `DEEPSEEK_API_KEY` | a credential *reference*, resolved per probe |
 | `api_base_url` | `https://api.deepseek.com` | must be a bare `https:` origin; plain `http:` is refused |
 
 The API key comes from `ctx.credentials` (i.e. `~/.dsh/.credentials.yaml` or the
 launch environment). It is resolved fresh for every probe and never cached.
+
+A ledger **day** is a calendar day at `accounting_utc_offset_minutes`, not at the
+host's timezone, so the service and any other process bucket the same instant into
+the same day. The default follows DeepSeek's billing day rather than the operator's
+local one, because the bill being accounted for is DeepSeek's.
 
 ## Development
 

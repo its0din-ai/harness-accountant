@@ -16,6 +16,11 @@
         poll_interval_sec: 60
         # How much daily history the ledger keeps. Clamped to [7, 730].
         retain_days: 400
+        # Accounting-day offset from UTC, in minutes. 480 is UTC+08:00,
+        # DeepSeek's billing day. A fixed offset, not a timezone: it does not
+        # model daylight saving. Set 0 for UTC, or your own offset for a local
+        # day. Changing it re-buckets future samples only.
+        accounting_utc_offset_minutes: 480
         # Credential reference resolved through ctx.credentials.
         api_key_env: DEEPSEEK_API_KEY
         api_base_url: https://api.deepseek.com

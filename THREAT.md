@@ -211,15 +211,24 @@ reach the map. Covered by *deserialize_ledger ignores prototype-polluting keys*.
 on every fold. A corrupt or hostile config value cannot produce an unbounded
 file.
 
-### T-22 — A jump in the system clock or a timezone change — **ACCEPTED**
-Day keys are local calendar dates via `Date#setDate`, so a DST transition or a
-month boundary is handled correctly, but a large manual clock change can
-mis-attribute a reading to the wrong day.
+### T-22 — A jump in the system clock — **ACCEPTED** (timezone half closed by B-01)
+Day keys come from a configured fixed UTC offset (`accounting_utc_offset_minutes`,
+default `480`), never from the host's local zone. A timezone change on the host no
+longer moves the boundary, and two processes on different hosts agree on a day.
+Daylight saving is not modelled — the setting is an offset, not a zone — which is
+exact for the default, since mainland China has observed no DST since 1991.
 
-*Why not mitigated.* Detecting it needs a monotonic reference and a policy for
-what to do when wall-clock and monotonic disagree — real complexity for a
-cosmetic mis-attribution. The worst case is a number in the wrong bucket, never
-corruption: the ledger stays schema-valid.
+A large manual clock change can still mis-attribute a reading to the wrong day.
+
+*Why the remaining half is not mitigated.* Detecting it needs a monotonic reference
+and a policy for what to do when wall-clock and monotonic disagree — real complexity
+for a cosmetic mis-attribution. The worst case is a number in the wrong bucket,
+never corruption: the ledger stays schema-valid.
+
+*Residual, named:* changing the configured offset re-buckets **future** samples
+only. Days already written keep the keys they were written with, so a change leaves
+a one-time seam in the series rather than silently rewriting history. Nothing reads
+the offset back out of the file, because the file does not record it (see B-04).
 
 ---
 
@@ -353,3 +362,4 @@ key-derived into a string that reaches a log, a route payload, or the DOM.
 | --- | --- |
 | 2026-09-28 | Initial model: 35 threats — 25 mitigated, 2 partial (T-09, T-35), 5 accepted (T-16, T-17, T-22, T-25, T-31), 2 out of scope (T-33, T-34), 1 explicit non-control (T-24) |
 | 2026-09-28 | E-013: recorded that in the maintainer's profile every registered route additionally sits behind `dsh-web-startup-auth`'s session gate. The fence is therefore defence in depth rather than the first gate — and the model explicitly does **not** count the third-party session as a control, because another package can be uninstalled. Section C gained a preamble; T-16 and T-17 reworded to match. |
+| 2026-09-28 | E-016 (B-01): day keys now come from a configured fixed UTC offset instead of the host's local zone, so the timezone half of **T-22** is closed and the remainder is narrowed to a manual clock jump. T-22 reworded; its residual (an offset change re-buckets future samples only, and the file does not record the offset) is named rather than implied. |
